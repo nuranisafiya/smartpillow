@@ -2,10 +2,11 @@
 <html lang="ms">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Pillow – Sistem Rekod Komunikasi AAC + NFC</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <title>Smart Pillow Comnunication</title>
+
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
 <!-- ============================================================
      FIREBASE CONFIG — PASTE YOUR KEYS HERE
@@ -31,6 +32,10 @@ const firebaseConfig = {
   appId: "1:5202962135:web:a5e63b8a0fc0aedf1bf632",
   measurementId: "G-BWYPXZ13G1"
 };
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
 // ─────────────────────────────────────────────────────────────────────
 
 import { initializeApp }                          from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
