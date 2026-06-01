@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Pillow – Sistem Rekod Komunikasi AAC + NFC</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+<!-- ============================================================
+     FIREBASE CONFIG — PASTE YOUR KEYS HERE
+     ============================================================
+     1. Go to: https://console.firebase.google.com
+     2. Create / open your project
+     3. Project Settings → General → "Your apps" → Web app (</>)
+     4. Copy the firebaseConfig object and replace EVERYTHING
+        between the curly braces below (keep the variable name)
+     5. In Firebase console:
+        - Authentication → Sign-in method → Enable "Email/Password"
+        - Firestore Database → Create database (production mode)
+        - Firestore Rules → paste the rules shown in README
+     ============================================================ -->
+<script type="module">
+// ─── STEP 1: REPLACE THIS ENTIRE OBJECT WITH YOUR FIREBASE CONFIG ───
+const firebaseConfig = {
+  apiKey:            "PASTE_YOUR_API_KEY_HERE",
+  authDomain:        "PASTE_YOUR_AUTH_DOMAIN_HERE",
+  projectId:         "PASTE_YOUR_PROJECT_ID_HERE",
+  storageBucket:     "PASTE_YOUR_STORAGE_BUCKET_HERE",
+  messagingSenderId: "PASTE_YOUR_MESSAGING_SENDER_ID_HERE",
+  appId:             "PASTE_YOUR_APP_ID_HERE"
+};
+// ─────────────────────────────────────────────────────────────────────
+
+import { initializeApp }                          from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword,
+         signInWithEmailAndPassword, signOut,
+         onAuthStateChanged, updateProfile }       from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+import { getFirestore, collection, doc, setDoc,
+         addDoc, getDocs, deleteDoc, updateDoc,
+         query, orderBy, limit, onSnapshot,
+         serverTimestamp, where }                  from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+
+// ── Init ──────────────────────────────────────────────────────────────
+const fbApp  = initializeApp(firebaseConfig);
+const auth   = getAuth(fbApp);
+const db     = getFirestore(fbApp);
+
+// ── Communication button definitions (static) ─────────────────────────
+const COMM_BUTTONS = [
+  { id:'makan_minum', label:'Saya nak makan / minum', icon:'🍽️', desc:'Lapar atau dahaga',  priority:false },
+  { id:'saya_nak',    label:'Saya nak',                icon:'🙋', desc:'Keinginan umum',    priority:false },
+  { id:'saya_taknak', label:'Saya taknak',             icon:'🙅', desc:'Menolak',           priority:false },
+  { id:'tolong',      label:'Tolong saya',             icon:'🆘', desc:'Perlu bantuan',     priority:true  },
+  { id:'ya',          label:'Ya',                      icon:'✅', desc:'Bersetuju',         priority:false },
+  { id:'tidak',       label:'Tidak',                   icon:'❌', desc:'Tidak bersetuju',   priority:false },
+  { id:'tandas',      label:'Saya nak ke tandas',      icon:'🚽', desc:'Keperluan tandas',  priority:false },
+  { id:'sakit',       label:'Saya sakit / tak selesa', icon:'🤒', desc:'Tidak sihat',       priority:true  },
+];
+const TTS = {
+  makan_minum:'Saya nak makan atau minum.',
+  saya_nak:   'Saya nak sesuatu.',
+  saya_taknak:'Saya taknak.',
+  tolong:     'Tolong saya! Saya perlukan bantuan.',
+  ya:         'Ya.',
+  tidak:      'Tidak.',
+  tandas:     'Saya nak ke tandas.',
+  sakit:      'Saya sakit atau tidak selesa.',
+};
+
+// ── Runtime state ─────────────────────────────────────────────────────
+let currentUser     = null;
+let students        = [];       // loaded from Firestore
+let activeStudent   = null;
+let commLog         = [];       // loaded from Firestore (recent 100)
+let nfcScanning     = false;
+let nfcReader       = null;
+let nfcFormatJSON   = false;
+let activeTab       = 'utama';
+let unsubLog        = null;     // Firestore real-time listener unsub fn
+let unsubStudents   = null;
+
+// ── Helpers ───────────────────────────────────────────────────────────
+const $  = id => document.getElementById(id);
+const show = id => { const e=$(id); if(e) e.style.display=''; };
+const hide = id => { const e=$(id); if(e) e.style.display='none'; };
+const showFlex = id => { const e=$(id); if(e) e.style.display='flex'; };
+
+function speak(text) {
+  if (!text || !window.speechSynthesis) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'ms-MY'; u.rate = 0.9;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
+
+function fmtTime(ts) {
+  if (!ts) return '–';
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleString('ms-MY', { dateStyle:'short', timeStyle:'short' });
+}
+
+function initials(name) {
+  if (!name) return '??';
+  const parts = name.trim().split(' ');
+  return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+}
+
+// ── Firestore paths ───────────────────────────────────────────────────
+const studentsCol  = uid => collection(db, 'users', uid, 'students');
+const studentDoc   = (uid,sid) => doc(db, 'users', uid, 'students', sid);
+const logsCol      = uid => collection(db, 'users', uid, 'logs');
+
+// ══════════════════════════════════════════════════════════════════════
+//  AUTH
+// ══════════════════════════════════════════════════════════════════════
+onAuthStateChanged(auth, user => {
+  if (user) {
+    currentUser = user;
+    hide('page-login');
+    hide('page-register');
+    showFlex('app-shell');
+    $('header-email').textContent = user.displayName || user.email;
+    subscribeStudents();
+    subscribeLog();
+    renderActiveTab();
+  } else {
+    currentUser = null;
+    teardownListeners();
+    hide('app-shell');
+    showFlex('page-login');
+  }
+});
+
+async function doLogin() {
+  const email = $('login-email').value.trim();
+  const pass  = $('login-pass').value.trim();
+  if (!email || !pass) { setLoginError('Sila isi emel dan kata laluan.'); return; }
+  setLoginError('');
+  $('btn-login').textContent = 'Sedang masuk…';
+  $('btn-login').disabled = true;
+  try {
+    await signInWithEmailAndPassword(auth, email, pass);
+    // onAuthStateChanged handles the rest
+  } catch(e) {
+    setLoginError(friendlyAuthError(e.code));
+    $('btn-login').textContent = '🔐 Log Masuk';
+    $('btn-login').disabled = false;
+  }
+}
+
+async function doRegister() {
+  const name  = $('reg-name').value.trim();
+  const email = $('reg-email').value.trim();
+  const pass  = $('reg-pass').value.trim();
+  const pass2 = $('reg-pass2').value.trim();
+  if (!name || !email || !pass) { setRegError('Sila isi semua medan.'); return; }
+  if (pass !== pass2)            { setRegError('Kata laluan tidak sepadan.'); return; }
+  if (pass.length < 6)           { setRegError('Kata laluan sekurang-kurangnya 6 aksara.'); return; }
+  setRegError('');
+  $('btn-register').textContent = 'Mendaftar…';
+  $('btn-register').disabled = true;
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    await updateProfile(cred.user, { displayName: name });
+    // onAuthStateChanged takes over
+  } catch(e) {
+    setRegError(friendlyAuthError(e.code));
+    $('btn-register').textContent = '✅ Daftar Akaun';
+    $('btn-register').disabled = false;
+  }
+}
+
+async function doLogout() {
+  teardownListeners();
+  nfcScanning = false; nfcReader = null;
+  students = []; commLog = []; activeStudent = null;
+  await signOut(auth);
+}
+
+function friendlyAuthError(code) {
+  const map = {
+    'auth/invalid-email':          'Format emel tidak sah.',
+    'auth/user-not-found':         'Akaun tidak dijumpai.',
+    'auth/wrong-password':         'Kata laluan salah.',
+    'auth/invalid-credential':     'Emel atau kata laluan salah.',
+    'auth/email-already-in-use':   'Emel ini sudah didaftarkan.',
+    'auth/weak-password':          'Kata laluan terlalu lemah (min 6 aksara).',
+    'auth/too-many-requests':      'Terlalu banyak percubaan. Cuba lagi sebentar.',
+    'auth/network-request-failed': 'Masalah sambungan rangkaian.',
+  };
+  return map[code] || ('Ralat: ' + code);
+}
+
+function setLoginError(msg) {
+  const el = $('login-error');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+function setRegError(msg) {
+  const el = $('reg-error');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  FIRESTORE REAL-TIME LISTENERS
+// ══════════════════════════════════════════════════════════════════════
+function subscribeStudents() {
+  if (!currentUser) return;
+  if (unsubStudents) unsubStudents();
+  const q = query(studentsCol(currentUser.uid), orderBy('createdAt', 'asc'));
+  unsubStudents = onSnapshot(q, snap => {
+    students = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    // Restore activeStudent by saved ID or default to first active
+    if (!activeStudent && students.length > 0) {
+      activeStudent = students.find(s => s.active) || students[0];
+    } else if (activeStudent) {
+      activeStudent = students.find(s => s._id === activeStudent._id) || students[0] || null;
+    }
+    renderStudentDropdown();
+    if (activeTab === 'murid') renderMurid();
+    if (activeTab === 'utama') renderUtamaStatus();
+  });
+}
+
+function subscribeLog() {
+  if (!currentUser) return;
+  if (unsubLog) unsubLog();
+  const q = query(logsCol(currentUser.uid), orderBy('timestamp', 'desc'), limit(200));
+  unsubLog = onSnapshot(q, snap => {
+    commLog = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    if (activeTab === 'utama')   renderUtama();
+    if (activeTab === 'analisis') renderAnalisis();
+  });
+}
+
+function teardownListeners() {
+  if (unsubLog)      { unsubLog();      unsubLog = null; }
+  if (unsubStudents) { unsubStudents(); unsubStudents = null; }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  STUDENTS (Firestore CRUD)
+// ══════════════════════════════════════════════════════════════════════
+async function saveStudent() {
+  if (!currentUser) return;
+  const name      = $('s-name').value.trim();
+  const diagnosis = $('s-diag').value.trim();
+  const age       = $('s-age').value.trim();
+  const notes     = $('s-notes').value.trim();
+  if (!name) { alert('Nama murid diperlukan.'); return; }
+
+  const editId = $('s-edit-id').value;
+  const btn = $('btn-save-student');
+  btn.textContent = 'Menyimpan…'; btn.disabled = true;
+
+  try {
+    if (editId) {
+      await updateDoc(studentDoc(currentUser.uid, editId), { name, diagnosis, age, notes, updatedAt: serverTimestamp() });
+    } else {
+      await addDoc(studentsCol(currentUser.uid), {
+        name, diagnosis, age, notes, active: false, createdAt: serverTimestamp()
+      });
+    }
+    closeStudentModal();
+  } catch(e) {
+    alert('Ralat menyimpan: ' + e.message);
+  }
+  btn.textContent = '💾 Simpan'; btn.disabled = false;
+}
+
+async function deleteStudent(sid) {
+  if (!currentUser || !confirm('Padam murid ini?')) return;
+  try {
+    await deleteDoc(studentDoc(currentUser.uid, sid));
+    if (activeStudent && activeStudent._id === sid) activeStudent = null;
+  } catch(e) { alert('Ralat memadam: ' + e.message); }
+}
+
+async function setActiveStudent(sid) {
+  if (!currentUser) return;
+  // Deactivate all, activate chosen
+  const batch = students.map(s =>
+    updateDoc(studentDoc(currentUser.uid, s._id), { active: s._id === sid })
+  );
+  await Promise.all(batch);
+  activeStudent = students.find(s => s._id === sid) || null;
+  renderStudentDropdown();
+  if (activeTab === 'utama') renderUtamaStatus();
+}
+
+function openAddStudent() {
+  $('s-edit-id').value = '';
+  $('s-name').value    = '';
+  $('s-diag').value    = '';
+  $('s-age').value     = '';
+  $('s-notes').value   = '';
+  $('modal-title').textContent = 'Tambah Murid Baru';
+  showFlex('modal-student');
+}
+function openEditStudent(sid) {
+  const s = students.find(x => x._id === sid);
+  if (!s) return;
+  $('s-edit-id').value = sid;
+  $('s-name').value    = s.name    || '';
+  $('s-diag').value    = s.diagnosis || '';
+  $('s-age').value     = s.age     || '';
+  $('s-notes').value   = s.notes   || '';
+  $('modal-title').textContent = 'Edit Maklumat Murid';
+  showFlex('modal-student');
+}
+function closeStudentModal() { hide('modal-student'); }
+
+// ══════════════════════════════════════════════════════════════════════
+//  COMMUNICATION TRIGGER (NFC or button tap)
+// ══════════════════════════════════════════════════════════════════════
+async function handleCommTrigger(id) {
+  if (!currentUser) return;
+  const btn = COMM_BUTTONS.find(b => b.id === id);
+  if (!btn) return;
+  speak(TTS[id] || btn.label);
+
+  // Highlight button
+  document.querySelectorAll('.comm-btn').forEach(el => el.classList.remove('active-scan'));
+  const el = document.querySelector(`.comm-btn[data-id="${id}"]`);
+  if (el) { el.classList.add('active-scan'); setTimeout(() => el.classList.remove('active-scan'), 2500); }
+
+  // Write to Firestore
+  try {
+    await addDoc(logsCol(currentUser.uid), {
+      id:          btn.id,
+      label:       btn.label,
+      icon:        btn.icon,
+      studentId:   activeStudent?._id   || null,
+      studentName: activeStudent?.name  || 'Tiada murid aktif',
+      source:      nfcScanning ? 'nfc' : 'button',
+      timestamp:   serverTimestamp(),
+    });
+    // Real-time listener will auto-refresh commLog & UI
+  } catch(e) {
+    console.error('Log write error:', e);
+  }
+}
+
+async function deleteLogEntry(lid) {
+  if (!currentUser) return;
+  try { await deleteDoc(doc(db, 'users', currentUser.uid, 'logs', lid)); } catch(e) {}
+}
+
+async function clearLog() {
+  if (!currentUser || !confirm('Padam SEMUA rekod komunikasi? Tindakan ini tidak boleh dibatalkan.')) return;
+  const snap = await getDocs(logsCol(currentUser.uid));
+  const deletes = snap.docs.map(d => deleteDoc(d.ref));
+  await Promise.all(deletes);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  NFC
+// ══════════════════════════════════════════════════════════════════════
+async function startNFC() {
+  if (!('NDEFReader' in window)) {
+    alert('WebNFC tidak disokong pada peranti/pelayar ini.\n\nWebNFC hanya berfungsi pada Chrome for Android (v89+) dengan HTTPS.\n\nGuna butang simulasi di bawah.');
+    return;
+  }
+  try {
+    nfcReader = new NDEFReader();
+    await nfcReader.scan();
+    nfcScanning = true;
+    nfcReader.addEventListener('reading', ({ message }) => {
+      for (const record of message.records) {
+        if (record.recordType === 'text') {
+          const decoder = new TextDecoder(record.encoding || 'utf-8');
+          const raw = decoder.decode(record.data).trim();
+          let id = raw;
+          try { const obj = JSON.parse(raw); id = obj.id || raw; } catch(_) {}
+          if (COMM_BUTTONS.find(b => b.id === id)) handleCommTrigger(id);
+        }
+      }
+    });
+    nfcReader.addEventListener('readingerror', () => {
+      showToast('Ralat membaca tag NFC. Pastikan tag adalah NDEF.', 'warn');
+    });
+  } catch(e) {
+    nfcScanning = false; nfcReader = null;
+    if (e.name === 'NotAllowedError') {
+      alert('Kebenaran NFC ditolak. Sila benarkan akses NFC dalam pelayar anda.');
+    } else {
+      alert('Gagal memulakan NFC: ' + e.message);
+    }
+  }
+  renderUtamaStatus();
+}
+
+function stopNFC() {
+  nfcScanning = false; nfcReader = null;
+  renderUtamaStatus();
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  CSV EXPORT
+// ══════════════════════════════════════════════════════════════════════
+function exportCSV() {
+  const header = 'Masa,Murid,Komunikasi,Sumber';
+  const rows = commLog.map(l =>
+    `"${fmtTime(l.timestamp)}","${l.studentName}","${l.label}","${l.source||'button'}"`
+  );
+  const csv  = [header, ...rows].join('\n');
+  const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `smart-pillow-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  TOAST
+// ══════════════════════════════════════════════════════════════════════
+function showToast(msg, type='info') {
+  let t = $('toast');
+  if (!t) { t = document.createElement('div'); t.id='toast'; document.body.appendChild(t); }
+  const colors = { info:'#2D4A43', warn:'#b7770d', error:'#C0392B', ok:'#1a6e2e' };
+  Object.assign(t.style, {
+    position:'fixed', bottom:'24px', left:'50%', transform:'translateX(-50%)',
+    background: colors[type]||colors.info, color:'#fff',
+    padding:'12px 22px', borderRadius:'10px', fontSize:'14px',
+    fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:'600',
+    zIndex:'9999', boxShadow:'0 4px 20px rgba(0,0,0,0.2)',
+    transition:'opacity 0.3s', opacity:'1',
+  });
+  t.textContent = msg;
+  clearTimeout(t._to);
+  t._to = setTimeout(() => { t.style.opacity='0'; }, 2800);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  TAB ROUTING
+// ══════════════════════════════════════════════════════════════════════
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === tab)
+  );
+  document.querySelectorAll('.page').forEach(p =>
+    p.classList.toggle('active', p.id === 'tab-' + tab)
+  );
+  renderActiveTab();
+}
+
+function renderActiveTab() {
+  switch(activeTab) {
+    case 'utama':    renderUtama();    break;
+    case 'analisis': renderAnalisis(); break;
+    case 'murid':    renderMurid();    break;
+    case 'nfc':      renderNFC();      break;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  RENDER: UTAMA
+// ══════════════════════════════════════════════════════════════════════
+function renderUtamaStatus() {
+  // Status alert
+  const alertEl = $('status-alert');
+  if (!alertEl) return;
+  const sn = activeStudent?.name;
+  const nfcOk = 'NDEFReader' in window;
+
+  if (!nfcOk) {
+    alertEl.innerHTML = `<div class="alert-warn">⚠️ WebNFC tidak disokong pada pelayar ini — guna butang simulasi di bawah. WebNFC hanya tersedia pada <strong>Chrome for Android (v89+)</strong> dengan HTTPS.</div>`;
+  } else if (nfcScanning) {
+    alertEl.innerHTML = `<div class="alert-success">✅ NFC aktif${sn ? ` — merakam untuk <strong>${sn}</strong>` : ''}. Dekatkan tag NFC ke peranti…</div>`;
+  } else {
+    alertEl.innerHTML = `<div class="alert-info">👋 Selamat kembali, <strong>${currentUser?.displayName || currentUser?.email}</strong>${sn ? `. Murid aktif: <strong>${sn}</strong>` : '. Tiada murid dipilih.'}</div>`;
+  }
+
+  // NFC area + button
+  const nfcArea = $('nfc-scan-area');
+  const nfcIcon = $('nfc-icon');
+  const nfcMsg  = $('nfc-msg');
+  const nfcBtn  = $('btn-nfc');
+  const lastLog = commLog[0];
+
+  if (lastLog) {
+    if (nfcArea) nfcArea.className = 'nfc-area active';
+    if (nfcIcon) { nfcIcon.textContent = lastLog.icon; nfcIcon.style.fontSize = '56px'; nfcIcon.classList.remove('nfc-pulse'); }
+    if (nfcMsg)  nfcMsg.innerHTML = `<strong style="font-size:16px;color:var(--forest-dark);font-family:'Plus Jakarta Sans',sans-serif;">${lastLog.label}</strong><br><span style="font-size:12px;color:var(--text-muted);">${lastLog.studentName} · ${fmtTime(lastLog.timestamp)}</span>`;
+  } else {
+    if (nfcArea) nfcArea.className = 'nfc-area' + (nfcScanning ? ' active' : '');
+    if (nfcIcon) {
+      nfcIcon.textContent = nfcScanning ? '📡' : '📶';
+      nfcIcon.style.fontSize = '48px';
+      nfcScanning ? nfcIcon.classList.add('nfc-pulse') : nfcIcon.classList.remove('nfc-pulse');
+    }
+    if (nfcMsg) nfcMsg.textContent = nfcScanning ? 'NFC aktif. Menunggu imbasan tag…' : 'Tiada imbasan lagi. Tekan butang di atas atau dekatkan tag NFC.';
+  }
+
+  if (nfcBtn) {
+    if (nfcScanning) {
+      nfcBtn.textContent = '⏹ Henti NFC';
+      nfcBtn.style.cssText = 'background:#fdf0ee;border-color:#f5b7b1;color:#922b21;';
+    } else {
+      nfcBtn.textContent = '📡 Mula Imbas NFC';
+      nfcBtn.style.cssText = '';
+    }
+  }
+}
+
+function renderUtama() {
+  renderUtamaStatus();
+
+  // Comm buttons
+  const grid = document.querySelector('.comm-grid');
+  if (grid) {
+    grid.innerHTML = COMM_BUTTONS.map(b => `
+      <button class="comm-btn${b.priority?' priority':''}" data-id="${b.id}" onclick="handleCommTrigger('${b.id}')">
+        <span class="comm-icon">${b.icon}</span>
+        <span class="comm-label">${b.label}</span>
+        <span class="comm-sub">${b.desc}</span>
+        ${b.priority?'<span class="badge badge-red" style="font-size:9px;padding:2px 7px;">KEUTAMAAN</span>':''}
+      </button>`).join('');
+  }
+
+  // Stats
+  const todayStr = new Date().toDateString();
+  const todayLogs = commLog.filter(l => {
+    const d = l.timestamp?.toDate ? l.timestamp.toDate() : new Date(l.timestamp);
+    return d.toDateString() === todayStr;
+  });
+  if ($('stat-total'))  $('stat-total').textContent  = todayLogs.length;
+  if ($('stat-unique')) $('stat-unique').textContent = new Set(todayLogs.map(l=>l.id)).size;
+  if ($('stat-all'))    $('stat-all').textContent    = commLog.length;
+
+  const counts = {};
+  todayLogs.forEach(l => counts[l.id] = (counts[l.id]||0)+1);
+  const topId  = Object.keys(counts).sort((a,b)=>counts[b]-counts[a])[0];
+  const topBtn = topId ? COMM_BUTTONS.find(b=>b.id===topId) : null;
+  if ($('stat-top')) $('stat-top').textContent = topBtn ? topBtn.icon : '–';
+
+  // Mini chart
+  const chart = $('mini-chart');
+  if (chart) {
+    if (todayLogs.length === 0) {
+      chart.innerHTML = '<span style="font-size:12px;color:var(--text-muted);align-self:center;">Tiada data hari ini.</span>';
+    } else {
+      const max = Math.max(...Object.values(counts), 1);
+      chart.innerHTML = COMM_BUTTONS.map(b => {
+        const c = counts[b.id] || 0;
+        const h = c > 0 ? Math.max(4, Math.round((c/max)*52)) : 2;
+        return `<div class="mini-bar-col">
+          <div class="mini-bar-fill" style="height:${h}px;background:${b.priority?'#C0392B':'var(--forest)'};opacity:${c>0?1:0.25};"></div>
+          <div class="mini-bar-lbl">${b.icon}</div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // Log table
+  const tbody = $('log-tbody');
+  if (!tbody) return;
+  if (commLog.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:28px;font-size:13px;">Tiada rekod lagi. Tekan butang komunikasi atau imbas tag NFC.</td></tr>';
+  } else {
+    tbody.innerHTML = commLog.slice(0,60).map(l => `
+      <tr>
+        <td style="color:var(--text-muted);white-space:nowrap;">${fmtTime(l.timestamp)}</td>
+        <td><div style="display:flex;align-items:center;gap:6px;"><div class="avatar" style="width:28px;height:28px;font-size:11px;">${initials(l.studentName)}</div>${l.studentName}</div></td>
+        <td><span style="margin-right:6px;">${l.icon}</span>${l.label}</td>
+        <td><span class="badge ${l.source==='nfc'?'badge-forest':'badge-gray'}">${l.source==='nfc'?'📡 NFC':'🖱️ Butang'}</span></td>
+        <td><button class="btn-ghost" style="padding:4px 8px;font-size:11px;" onclick="deleteLogEntry('${l._id}')">🗑️</button></td>
+      </tr>`).join('');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  RENDER: ANALISIS
+// ══════════════════════════════════════════════════════════════════════
+function renderAnalisis() {
+  const el = $('analisis-content');
+  if (!el) return;
+  const sn = activeStudent?.name || 'murid ini';
+
+  if (commLog.length === 0) {
+    el.innerHTML = `
+      <div style="text-align:center;padding:60px 20px;">
+        <div style="font-size:64px;margin-bottom:16px;opacity:0.35;">📊</div>
+        <h2 style="font-size:18px;font-weight:700;color:var(--text-muted);margin:0 0 8px;">Belum ada data untuk ${sn}</h2>
+        <p style="color:var(--text-muted);font-size:14px;margin:0 0 24px;">Mulakan dengan merakam komunikasi melalui Halaman Utama.</p>
+        <button class="btn-primary" onclick="switchTab('utama')">🏠 Pergi ke Halaman Utama</button>
+      </div>`;
+    return;
+  }
+
+  // Frequency per button
+  const counts = {};
+  COMM_BUTTONS.forEach(b => counts[b.id] = 0);
+  commLog.forEach(l => { if (counts[l.id] !== undefined) counts[l.id]++; });
+  const sorted = [...COMM_BUTTONS].sort((a,b) => counts[b.id]-counts[a.id]);
+  const maxC   = Math.max(...Object.values(counts), 1);
+
+  // By date (last 14 days)
+  const byDay = {};
+  commLog.forEach(l => {
+    const d = (l.timestamp?.toDate ? l.timestamp.toDate() : new Date(l.timestamp)).toLocaleDateString('ms-MY');
+    byDay[d] = (byDay[d]||0)+1;
+  });
+  const days = Object.keys(byDay).slice(-14);
+  const maxD = Math.max(...Object.values(byDay), 1);
+
+  // By source
+  const nfcCount = commLog.filter(l=>l.source==='nfc').length;
+  const btnCount = commLog.length - nfcCount;
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;">
+      <div class="stat-box"><div class="stat-num">${commLog.length}</div><div class="stat-lbl">Jumlah Rekod</div></div>
+      <div class="stat-box"><div class="stat-num">${Object.keys(byDay).length}</div><div class="stat-lbl">Hari Aktif</div></div>
+      <div class="stat-box"><div class="stat-num">${sorted[0].icon}</div><div class="stat-lbl">Paling Kerap: ${sorted[0].label.slice(0,16)}…</div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="sec-title" style="margin-bottom:14px;">Frekuensi Komunikasi (Semua Masa)</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        ${sorted.map(b => {
+          const pct = Math.round((counts[b.id]/maxC)*100);
+          return `<div style="display:flex;align-items:center;gap:10px;">
+            <span style="width:26px;text-align:center;font-size:18px;">${b.icon}</span>
+            <span style="font-size:12px;min-width:175px;color:var(--text-main);">${b.label}</span>
+            <div style="flex:1;background:var(--cream-border);border-radius:4px;height:14px;overflow:hidden;">
+              <div style="width:${pct}%;background:${b.priority?'var(--red-alert)':'var(--forest)'};height:100%;border-radius:4px;transition:width 0.4s;"></div>
+            </div>
+            <span style="font-size:13px;font-weight:700;min-width:30px;text-align:right;color:var(--forest-dark);">${counts[b.id]}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="sec-title" style="margin-bottom:14px;">Aktiviti Harian (Sehingga 14 Hari Lepas)</div>
+      ${days.length === 0 ? '<p style="color:var(--text-muted);font-size:13px;">Tiada data.</p>' : `
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          ${days.reverse().map(d => {
+            const c = byDay[d];
+            const pct = Math.round((c/maxD)*100);
+            return `<div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-size:12px;color:var(--text-muted);min-width:90px;">${d}</span>
+              <div style="flex:1;background:var(--cream-border);border-radius:4px;height:14px;">
+                <div style="width:${pct}%;background:var(--forest);height:100%;border-radius:4px;"></div>
+              </div>
+              <span style="font-size:12px;font-weight:700;color:var(--forest-dark);min-width:24px;text-align:right;">${c}</span>
+            </div>`;
+          }).join('')}
+        </div>`}
+    </div>
+
+    <div class="card">
+      <div class="sec-title" style="margin-bottom:14px;">Sumber Komunikasi</div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;">
+        <div class="stat-box" style="flex:1;min-width:100px;">
+          <div class="stat-num" style="font-size:22px;">📡 ${nfcCount}</div>
+          <div class="stat-lbl">Imbasan NFC Sebenar</div>
+        </div>
+        <div class="stat-box" style="flex:1;min-width:100px;">
+          <div class="stat-num" style="font-size:22px;">🖱️ ${btnCount}</div>
+          <div class="stat-lbl">Butang Manual</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  RENDER: MURID
+// ══════════════════════════════════════════════════════════════════════
+function renderMurid() {
+  const el = $('student-list');
+  if (!el) return;
+  if (students.length === 0) {
+    el.innerHTML = `
+      <div style="text-align:center;padding:60px 20px;">
+        <div style="font-size:56px;opacity:0.3;margin-bottom:14px;">👤</div>
+        <h2 style="font-size:17px;font-weight:700;color:var(--text-muted);margin:0 0 8px;">Tiada murid didaftarkan</h2>
+        <p style="font-size:14px;color:var(--text-muted);margin:0 0 20px;">Daftarkan murid untuk mula merekod komunikasi mereka.</p>
+        <button class="btn-primary" onclick="openAddStudent()">➕ Tambah Murid Pertama</button>
+      </div>`;
+    return;
+  }
+  el.innerHTML = students.map(s => `
+    <div class="student-card" style="margin-bottom:12px;">
+      <div style="display:flex;gap:14px;align-items:flex-start;flex:1;">
+        <div class="avatar" style="width:52px;height:52px;font-size:18px;">${initials(s.name)}</div>
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+            <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:16px;">${s.name}</span>
+            <span class="badge ${s.active?'badge-green':'badge-gray'}">${s.active?'● AKTIF':'○ TIDAK AKTIF'}</span>
+          </div>
+          <div style="font-size:13px;color:var(--text-muted);">
+            ${s.diagnosis?`<span class="badge badge-blue" style="margin-right:6px;">${s.diagnosis}</span>`:''}
+            ${s.age?`<span style="margin-right:8px;">📅 ${s.age}</span>`:''}
+          </div>
+          ${s.notes?`<div style="font-size:12px;color:var(--text-muted);margin-top:6px;font-style:italic;">${s.notes}</div>`:''}
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;">
+        ${!s.active?`<button class="btn-secondary" style="white-space:nowrap;font-size:12px;" onclick="setActiveStudent('${s._id}')">⭐ Jadikan Aktif</button>`:''}
+        <button class="btn-ghost" onclick="openEditStudent('${s._id}')">✏️ Edit</button>
+        <button class="btn-ghost" style="color:var(--red-alert);" onclick="deleteStudent('${s._id}')">🗑️ Padam</button>
+      </div>
+    </div>`).join('');
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  RENDER: NFC SETTINGS
+// ══════════════════════════════════════════════════════════════════════
+function renderNFC() {
+  const container = $('nfc-payloads');
+  if (!container) return;
+  document.getElementById('format-lbl').textContent = 'Format: ' + (nfcFormatJSON?'JSON':'Teks Mudah');
+  container.innerHTML = COMM_BUTTONS.map(b => {
+    const payload = nfcFormatJSON
+      ? JSON.stringify({ id:b.id, label:b.label, icon:b.icon }, null, 2)
+      : b.id;
+    return `
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <span style="font-size:13px;font-weight:600;font-family:'Plus Jakarta Sans',sans-serif;">${b.icon} ${b.label}</span>
+          ${b.priority?'<span class="badge badge-red">Keutamaan</span>':''}
+        </div>
+        <div class="payload-box">
+          <pre style="margin:0;font-size:12px;white-space:pre-wrap;padding-right:52px;">${payload}</pre>
+          <button onclick="copyPayload(this,${JSON.stringify(JSON.stringify(payload))})"
+            style="position:absolute;top:8px;right:8px;padding:4px 10px;background:var(--forest);color:white;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;">
+            Salin
+          </button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function toggleFormat() {
+  nfcFormatJSON = $('format-toggle').checked;
+  renderNFC();
+}
+
+function copyPayload(btn, jsonStr) {
+  const text = JSON.parse(jsonStr);
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓ Disalin!';
+    btn.style.background = '#27ae60';
+    setTimeout(() => { btn.textContent = orig; btn.style.background = 'var(--forest)'; }, 1800);
+  });
+}
+
+// ── Student dropdown in header ────────────────────────────────────────
+function renderStudentDropdown() {
+  const dd = $('student-dropdown');
+  if (!dd) return;
+  if (students.length === 0) {
+    dd.innerHTML = '<option value="">– Tiada murid –</option>';
+    return;
+  }
+  dd.innerHTML = students.map(s =>
+    `<option value="${s._id}" ${activeStudent && s._id===activeStudent._id?'selected':''}>${s.name}${s.diagnosis?' ('+s.diagnosis+')':''}</option>`
+  ).join('');
+}
+
+function changeActiveStudent(sid) {
+  if (!sid) return;
+  setActiveStudent(sid);
+}
+
+// Expose to HTML onclick (module scope bridging)
+Object.assign(window, {
+  doLogin, doRegister, doLogout,
+  switchTab, handleCommTrigger,
+  startNFC, stopNFC,
+  toggleNFC: () => nfcScanning ? stopNFC() : startNFC(),
+  exportCSV, clearLog, deleteLogEntry,
+  openAddStudent, openEditStudent, closeStudentModal, saveStudent, deleteStudent, setActiveStudent,
+  changeActiveStudent,
+  toggleFormat, copyPayload,
+  showLogin:    () => { hide('page-register'); showFlex('page-login'); },
+  showRegister: () => { hide('page-login');    showFlex('page-register'); },
+});
+</script>
+
+<style>
+  :root {
+    --forest:#2D4A43; --forest-dark:#1e332e; --forest-light:#3d6158;
+    --cream:#F9F8F3;  --cream-dark:#F0EFE8;  --cream-border:#E4E1D6;
+    --red-alert:#C0392B; --text-main:#1a2420; --text-muted:#6b7b77;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--text-main);min-height:100vh;margin:0;}
+  h1,h2,h3,h4,h5{font-family:'Plus Jakarta Sans',sans-serif;}
+  ::-webkit-scrollbar{width:6px;} ::-webkit-scrollbar-track{background:var(--cream-dark);} ::-webkit-scrollbar-thumb{background:#bfbdb5;border-radius:3px;}
+
+  .btn-primary{background:var(--forest);color:#fff;border:none;border-radius:10px;padding:10px 22px;font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;font-size:14px;cursor:pointer;transition:background .18s,transform .1s;display:inline-flex;align-items:center;gap:7px;}
+  .btn-primary:hover{background:var(--forest-dark);transform:translateY(-1px);}
+  .btn-primary:active{transform:scale(.97);}
+  .btn-primary:disabled{opacity:.6;cursor:not-allowed;transform:none;}
+  .btn-secondary{background:transparent;color:var(--forest);border:1.5px solid var(--forest);border-radius:10px;padding:9px 18px;font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;font-size:13px;cursor:pointer;transition:background .15s;display:inline-flex;align-items:center;gap:7px;}
+  .btn-secondary:hover{background:#edf3f1;}
+  .btn-danger{background:#fdf0ee;color:var(--red-alert);border:1.5px solid #f5c6c0;border-radius:10px;padding:9px 18px;font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;font-size:13px;cursor:pointer;transition:background .15s;display:inline-flex;align-items:center;gap:7px;}
+  .btn-danger:hover{background:#fbe0dc;}
+  .btn-ghost{background:transparent;border:none;color:var(--text-muted);font-size:13px;cursor:pointer;padding:6px 10px;border-radius:8px;transition:background .12s,color .12s;display:inline-flex;align-items:center;gap:5px;font-family:'DM Sans',sans-serif;}
+  .btn-ghost:hover{background:var(--cream-border);color:var(--text-main);}
+
+  .tab-nav{display:flex;gap:4px;background:var(--cream-dark);border-bottom:1px solid var(--cream-border);padding:0 20px;overflow-x:auto;}
+  .tab-btn{padding:12px 18px;font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;font-size:13px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-bottom:3px solid transparent;transition:color .15s,border-color .15s;white-space:nowrap;display:flex;align-items:center;gap:7px;}
+  .tab-btn:hover{color:var(--forest);}
+  .tab-btn.active{color:var(--forest);border-bottom-color:var(--forest);}
+
+  .card{background:#fff;border:1px solid var(--cream-border);border-radius:14px;padding:20px;}
+  .card-sm{background:#fff;border:1px solid var(--cream-border);border-radius:12px;padding:14px 16px;}
+
+  .comm-btn{background:#fff;border:2px solid var(--cream-border);border-radius:14px;padding:18px 12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:10px;transition:transform .15s,box-shadow .15s,border-color .15s,background .15s;user-select:none;text-align:center;}
+  .comm-btn:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(45,74,67,.1);border-color:var(--forest-light);}
+  .comm-btn:active{transform:scale(.96);}
+  .comm-btn.priority{border-color:#f5a89b;background:#fff8f7;}
+  .comm-btn.priority:hover{border-color:var(--red-alert);box-shadow:0 4px 16px rgba(192,57,43,.12);}
+  .comm-btn.active-scan{border-color:var(--forest);background:#edf5f2;box-shadow:0 0 0 3px rgba(45,74,67,.18);animation:pulse-green .6s ease;}
+  @keyframes pulse-green{0%{box-shadow:0 0 0 0 rgba(45,74,67,.4)}70%{box-shadow:0 0 0 10px rgba(45,74,67,0)}100%{box-shadow:0 0 0 3px rgba(45,74,67,.18)}}
+  .comm-icon{font-size:36px;line-height:1;}
+  .comm-label{font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:13px;color:var(--text-main);line-height:1.3;}
+  .comm-sub{font-size:11px;color:var(--text-muted);}
+
+  .alert-info{background:#EBF4F1;border:1px solid #a4d4c6;border-radius:10px;padding:12px 16px;font-size:14px;color:var(--forest-dark);}
+  .alert-warn{background:#FEF9E7;border:1px solid #f8d86a;border-radius:10px;padding:12px 16px;font-size:14px;color:#7d6608;}
+  .alert-danger{background:#FDEDEC;border:1px solid #f5b7b1;border-radius:10px;padding:12px 16px;font-size:14px;color:#922b21;}
+  .alert-success{background:#EAF4EA;border:1px solid #a9d8a9;border-radius:10px;padding:12px 16px;font-size:14px;color:#1e6e23;}
+
+  .badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;font-family:'Plus Jakarta Sans',sans-serif;letter-spacing:.5px;text-transform:uppercase;}
+  .badge-green{background:#d0f0e0;color:#0e5c30;}
+  .badge-red{background:#fde8e6;color:#8c1d14;}
+  .badge-blue{background:#daeeff;color:#0c3d70;}
+  .badge-gray{background:var(--cream-border);color:var(--text-muted);}
+  .badge-forest{background:#d4e8e4;color:var(--forest-dark);}
+
+  input[type=text],input[type=email],input[type=password],textarea,select{width:100%;padding:10px 14px;border:1.5px solid var(--cream-border);border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;background:#fff;color:var(--text-main);outline:none;transition:border-color .15s;}
+  input:focus,textarea:focus,select:focus{border-color:var(--forest);}
+
+  .toggle{position:relative;width:46px;height:26px;display:inline-block;}
+  .toggle input{opacity:0;width:0;height:0;}
+  .toggle-slider{position:absolute;inset:0;background:var(--cream-border);border-radius:13px;cursor:pointer;transition:background .2s;}
+  .toggle-slider:before{content:'';position:absolute;width:20px;height:20px;left:3px;top:3px;background:white;border-radius:50%;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.15);}
+  .toggle input:checked+.toggle-slider{background:var(--forest);}
+  .toggle input:checked+.toggle-slider:before{transform:translateX(20px);}
+
+  .data-table{width:100%;border-collapse:collapse;font-size:13px;}
+  .data-table th{text-align:left;padding:10px 14px;background:var(--cream-dark);color:var(--text-muted);font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--cream-border);}
+  .data-table td{padding:11px 14px;border-bottom:1px solid #f0ede3;vertical-align:middle;}
+  .data-table tr:last-child td{border-bottom:none;}
+  .data-table tr:hover td{background:#f9f8f3;}
+  .data-table-wrap{overflow-x:auto;border:1px solid var(--cream-border);border-radius:12px;}
+
+  .nfc-area{border:2.5px dashed var(--cream-border);border-radius:16px;padding:32px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:var(--cream-dark);text-align:center;min-height:160px;transition:border-color .2s,background .2s;}
+  .nfc-area.active{border-color:var(--forest);background:#EBF4F1;}
+  .nfc-pulse{animation:nfcpulse 1.8s ease-in-out infinite;}
+  @keyframes nfcpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(1.08)}}
+
+  .mini-bar{display:flex;align-items:flex-end;gap:4px;height:60px;}
+  .mini-bar-col{display:flex;flex-direction:column;align-items:center;gap:3px;}
+  .mini-bar-fill{width:24px;background:var(--forest);border-radius:4px 4px 0 0;transition:height .3s ease;min-height:2px;}
+  .mini-bar-lbl{font-size:9px;color:var(--text-muted);font-family:'DM Sans',sans-serif;white-space:nowrap;}
+
+  .modal-bg{position:fixed;inset:0;background:rgba(20,30,28,.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .modal-box{background:#fff;border-radius:16px;padding:28px;max-width:480px;width:100%;box-shadow:0 20px 60px rgba(20,30,28,.2);position:relative;}
+
+  .app-header{background:var(--forest);color:white;padding:0 24px;height:58px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(20,30,28,.18);}
+  .app-header select{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;max-width:160px;}
+  .app-header select option{background:var(--forest-dark);color:#fff;}
+
+  .page{display:none;}
+  .page.active{display:block;}
+  .main-content{padding:24px;max-width:960px;margin:0 auto;display:flex;flex-direction:column;gap:20px;}
+  .sec-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+  .sec-title{font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;}
+  .stat-box{background:var(--cream-dark);border-radius:10px;padding:14px 16px;border:1px solid var(--cream-border);}
+  .stat-num{font-family:'Plus Jakarta Sans',sans-serif;font-size:26px;font-weight:800;color:var(--forest-dark);}
+  .stat-lbl{font-size:12px;color:var(--text-muted);margin-top:2px;}
+  .avatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:16px;background:#d4e8e4;color:var(--forest-dark);flex-shrink:0;}
+  .student-card{background:#fff;border:1px solid var(--cream-border);border-radius:14px;padding:20px;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;}
+  .payload-box{background:var(--cream-dark);border:1px solid var(--cream-border);border-radius:10px;padding:12px 14px;font-family:'Courier New',monospace;font-size:12px;color:var(--text-main);word-break:break-all;position:relative;}
+  .form-group{display:flex;flex-direction:column;gap:6px;}
+  .form-label{font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;font-size:13px;color:var(--text-main);}
+  .toggle-wrap{display:flex;align-items:center;gap:10px;}
+  .auth-card{background:#fff;border:1px solid var(--cream-border);border-radius:20px;padding:40px 36px;width:100%;max-width:420px;box-shadow:0 4px 30px rgba(45,74,67,.07);}
+  .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--cream);padding:24px;}
+
+  @media(max-width:600px){
+    .comm-grid{grid-template-columns:repeat(2,1fr)!important;}
+    .stat-grid{grid-template-columns:repeat(2,1fr)!important;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════ LOGIN ══════════ -->
+<div id="page-login" class="auth-wrap">
+  <div class="auth-card">
+    <div style="text-align:center;margin-bottom:28px;">
+      <div style="font-size:40px;margin-bottom:10px;">🛏️</div>
+      <h1 style="font-size:22px;font-weight:800;color:var(--forest-dark);margin:0 0 4px;">Smart Pillow</h1>
+      <p style="font-size:13px;color:var(--text-muted);margin:0;">Sistem Rekod Komunikasi AAC + NFC</p>
+    </div>
+    <h2 style="font-size:16px;font-weight:700;margin:0 0 18px;">Log Masuk</h2>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div class="form-group">
+        <label class="form-label">Emel</label>
+        <input type="email" id="login-email" placeholder="emel@sekolah.edu.my" autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Kata Laluan</label>
+        <input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password"
+          onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+      <div id="login-error" class="alert-danger" style="display:none;font-size:13px;"></div>
+      <button id="btn-login" class="btn-primary" style="width:100%;justify-content:center;padding:12px;font-size:15px;border-radius:12px;" onclick="doLogin()">
+        🔐 Log Masuk
+      </button>
+    </div>
+    <p style="text-align:center;font-size:13px;color:var(--text-muted);margin-top:20px;">
+      Belum ada akaun? <a href="#" onclick="showRegister()" style="color:var(--forest);font-weight:600;text-decoration:none;">Daftar di sini</a>
+    </p>
+  </div>
+</div>
+
+<!-- ══════════ REGISTER ══════════ -->
+<div id="page-register" class="auth-wrap" style="display:none;">
+  <div class="auth-card">
+    <div style="text-align:center;margin-bottom:24px;">
+      <div style="font-size:36px;margin-bottom:8px;">🛏️</div>
+      <h1 style="font-size:20px;font-weight:800;color:var(--forest-dark);margin:0;">Daftar Akaun Baru</h1>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div class="form-group">
+        <label class="form-label">Nama Penuh</label>
+        <input type="text" id="reg-name" placeholder="Cth: Pn. Aminah Hassan" autocomplete="name">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Emel</label>
+        <input type="email" id="reg-email" placeholder="emel@sekolah.edu.my" autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Kata Laluan (min 6 aksara)</label>
+        <input type="password" id="reg-pass" placeholder="••••••••" autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Ulang Kata Laluan</label>
+        <input type="password" id="reg-pass2" placeholder="••••••••" autocomplete="new-password"
+          onkeydown="if(event.key==='Enter')doRegister()">
+      </div>
+      <div id="reg-error" class="alert-danger" style="display:none;font-size:13px;"></div>
+      <button id="btn-register" class="btn-primary" style="width:100%;justify-content:center;padding:12px;font-size:15px;border-radius:12px;" onclick="doRegister()">
+        ✅ Daftar Akaun
+      </button>
+    </div>
+    <p style="text-align:center;font-size:13px;color:var(--text-muted);margin-top:20px;">
+      Sudah ada akaun? <a href="#" onclick="showLogin()" style="color:var(--forest);font-weight:600;text-decoration:none;">Log masuk</a>
+    </p>
+  </div>
+</div>
+
+<!-- ══════════ APP SHELL ══════════ -->
+<div id="app-shell" style="display:none;">
+
+  <header class="app-header">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-size:24px;">🛏️</span>
+      <div>
+        <div style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:14px;color:#fff;line-height:1.2;">Smart Pillow</div>
+        <div style="font-size:10px;color:rgba(255,255,255,.65);">Sistem AAC + NFC</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:nowrap;">
+      <select id="student-dropdown" onchange="changeActiveStudent(this.value)"></select>
+      <span style="background:rgba(255,255,255,.15);color:#fff;font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;font-family:'Plus Jakarta Sans',sans-serif;white-space:nowrap;" id="header-email">GURU</span>
+      <button class="btn-ghost" style="color:rgba(255,255,255,.8);font-size:12px;white-space:nowrap;" onclick="doLogout()">⬅️ Keluar</button>
+    </div>
+  </header>
+
+  <nav class="tab-nav">
+    <button class="tab-btn active" data-tab="utama"    onclick="switchTab('utama')">🏠 Halaman Utama</button>
+    <button class="tab-btn"        data-tab="analisis" onclick="switchTab('analisis')">📊 Analisis Data</button>
+    <button class="tab-btn"        data-tab="murid"    onclick="switchTab('murid')">👤 Maklumat Murid</button>
+    <button class="tab-btn"        data-tab="nfc"      onclick="switchTab('nfc')">📡 Tetapan NFC</button>
+  </nav>
+
+  <!-- UTAMA -->
+  <div id="tab-utama" class="page active">
+    <div class="main-content">
+      <div id="status-alert"></div>
+
+      <div>
+        <div class="sec-head">
+          <span class="sec-title">📡 Komunikasi Semasa</span>
+          <button id="btn-nfc" class="btn-secondary" onclick="toggleNFC()">📡 Mula Imbas NFC</button>
+        </div>
+        <div id="nfc-scan-area" class="nfc-area">
+          <div id="nfc-icon" style="font-size:48px;color:var(--text-muted);">📶</div>
+          <p id="nfc-msg" style="font-size:14px;color:var(--text-muted);margin:0;max-width:320px;">Tiada imbasan lagi. Tekan butang di atas atau dekatkan tag NFC.</p>
+        </div>
+      </div>
+
+      <div>
+        <div class="sec-head">
+          <span class="sec-title">🔘 8 Butang Komunikasi</span>
+          <span style="font-size:12px;color:var(--text-muted);">Ketik untuk simulasi / merakam</span>
+        </div>
+        <div class="comm-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;"></div>
+      </div>
+
+      <div>
+        <div class="sec-head"><span class="sec-title">📈 Statistik Hari Ini</span></div>
+        <div class="stat-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
+          <div class="stat-box"><div class="stat-num" id="stat-total">–</div><div class="stat-lbl">Jumlah Hari Ini</div></div>
+          <div class="stat-box"><div class="stat-num" id="stat-unique">–</div><div class="stat-lbl">Jenis Unik</div></div>
+          <div class="stat-box"><div class="stat-num" id="stat-top">–</div><div class="stat-lbl">Paling Kerap</div></div>
+          <div class="stat-box"><div class="stat-num" id="stat-all">–</div><div class="stat-lbl">Jumlah Keseluruhan</div></div>
+        </div>
+        <div class="card-sm">
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Aktiviti hari ini (mengikut jenis)</div>
+          <div id="mini-chart" class="mini-bar"></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="sec-head">
+          <span class="sec-title">📋 Rekod Komunikasi</span>
+          <div style="display:flex;gap:8px;">
+            <button class="btn-secondary" onclick="exportCSV()">📤 Eksport CSV</button>
+            <button class="btn-danger"    onclick="clearLog()">🗑️ Padam Semua</button>
+          </div>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Masa</th><th>Murid</th><th>Komunikasi</th><th>Sumber</th><th style="width:40px;"></th>
+              </tr>
+            </thead>
+            <tbody id="log-tbody">
+              <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:28px;font-size:13px;">Memuatkan…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ANALISIS -->
+  <div id="tab-analisis" class="page">
+    <div class="main-content"><div id="analisis-content"></div></div>
+  </div>
+
+  <!-- MURID -->
+  <div id="tab-murid" class="page">
+    <div class="main-content">
+      <div class="sec-head" style="margin-bottom:0;">
+        <span class="sec-title">👤 Senarai Murid</span>
+        <button class="btn-primary" onclick="openAddStudent()">➕ Tambah Murid Baru</button>
+      </div>
+      <div id="student-list"></div>
+    </div>
+  </div>
+
+  <!-- NFC SETTINGS -->
+  <div id="tab-nfc" class="page">
+    <div class="main-content">
+      <div class="card">
+        <h2 style="font-size:17px;font-weight:700;margin:0 0 8px;">Tetapan Tag NFC</h2>
+        <p style="font-size:14px;color:var(--text-muted);margin:0 0 20px;">Jana kandungan untuk ditulis ke dalam tag NFC menggunakan <em>NFC Tools</em> atau seumpamanya.</p>
+        <div style="background:var(--cream-dark);border-radius:10px;padding:14px 16px;margin-bottom:20px;font-size:13px;color:var(--text-muted);">
+          <strong style="color:var(--text-main);">⚙️ Cara menulis tag:</strong>
+          <ol style="margin:8px 0 0 16px;padding:0;display:flex;flex-direction:column;gap:4px;">
+            <li>Muat turun app <em>NFC Tools</em> pada telefon Android/iOS</li>
+            <li>Buka app → pilih <strong>Write</strong> → <strong>Add a record</strong> → <strong>Text</strong></li>
+            <li>Salin payload dari bawah dan tampal ke dalam medan teks</li>
+            <li>Sentuh telefon ke atas tag NFC untuk menulis</li>
+          </ol>
+        </div>
+        <div class="toggle-wrap" style="margin-bottom:20px;">
+          <label class="toggle"><input type="checkbox" id="format-toggle" onchange="toggleFormat()"><span class="toggle-slider"></span></label>
+          <span style="font-size:14px;font-weight:600;" id="format-lbl">Format: Teks Mudah</span>
+        </div>
+        <div id="nfc-payloads" style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- end app-shell -->
+
+<!-- STUDENT MODAL -->
+<div id="modal-student" class="modal-bg" style="display:none;" onclick="if(event.target===this)closeStudentModal()">
+  <div class="modal-box">
+    <h2 id="modal-title" style="font-size:18px;font-weight:700;margin:0 0 20px;">Tambah Murid Baru</h2>
+    <input type="hidden" id="s-edit-id">
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div class="form-group"><label class="form-label">Nama Penuh *</label><input type="text" id="s-name" placeholder="Cth: Ahmad bin Zulkifli"></div>
+      <div class="form-group"><label class="form-label">Diagnosis</label><input type="text" id="s-diag" placeholder="Cth: Autism Spektrum, Down Syndrome"></div>
+      <div class="form-group"><label class="form-label">Umur</label><input type="text" id="s-age" placeholder="Cth: 9 tahun"></div>
+      <div class="form-group"><label class="form-label">Catatan</label><textarea id="s-notes" rows="3" placeholder="Maklumat tambahan tentang murid…"></textarea></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:4px;">
+        <button class="btn-ghost" onclick="closeStudentModal()">Batal</button>
+        <button id="btn-save-student" class="btn-primary" onclick="saveStudent()">💾 Simpan</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
