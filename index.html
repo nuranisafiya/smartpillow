@@ -23,16 +23,15 @@
 <script type="module">
 // ─── STEP 1: REPLACE THIS ENTIRE OBJECT WITH YOUR FIREBASE CONFIG ───
 const firebaseConfig = {
-  apiKey: "AIzaSyCJRpDsRqUlXhy-5GYhbeBjtGIxLOo0390",
-  authDomain: "scpsystem-c2dec.firebaseapp.com",
-  projectId: "scpsystem-c2dec",
-  storageBucket: "scpsystem-c2dec.firebasestorage.app",
-  messagingSenderId: "5202962135",
-  appId: "1:5202962135:web:a5e63b8a0fc0aedf1bf632",
-  measurementId: "G-BWYPXZ13G1"
+  apiKey:            "AIzaSyCJRpDsRqUlXhy-5GYhbeBjtGIxLOoO390",
+  authDomain:        "scpsystem-c2dec.firebaseapp.com",
+  projectId:         "scpsystem-c2dec",
+  storageBucket:     "scpsystem-c2dec.firebasestorage.app",
+  messagingSenderId: "520296926135",
+  appId:             "1:520296926135:web:a5e63b8a0fc0aedf1bf632"
 };
+// ─────────────────────────────────────────────────────────────────────
 
-// ─── STEP 2: IMPORTS ───
 import { initializeApp }                          from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword,
          signInWithEmailAndPassword, signOut,
@@ -42,7 +41,7 @@ import { getFirestore, collection, doc, setDoc,
          query, orderBy, limit, onSnapshot,
          serverTimestamp, where }                  from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
-// ─── STEP 3: INITIALIZATION (Satu Deklarasi Sahaja!) ───
+// ── Init ──────────────────────────────────────────────────────────────
 const fbApp  = initializeApp(firebaseConfig);
 const auth   = getAuth(fbApp);
 const db     = getFirestore(fbApp);
