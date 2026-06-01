@@ -2,21 +2,38 @@
 <html lang="ms">
 <head>
 <meta charset="UTF-8">
-    <title>Smart Pillow Communication</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Pillow – Sistem Rekod Komunikasi AAC + NFC</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 
+<!-- ============================================================
+     FIREBASE CONFIG — PASTE YOUR KEYS HERE
+     ============================================================
+     1. Go to: https://console.firebase.google.com
+     2. Create / open your project
+     3. Project Settings → General → "Your apps" → Web app (</>)
+     4. Copy the firebaseConfig object and replace EVERYTHING
+        between the curly braces below (keep the variable name)
+     5. In Firebase console:
+        - Authentication → Sign-in method → Enable "Email/Password"
+        - Firestore Database → Create database (production mode)
+        - Firestore Rules → paste the rules shown in README
+     ============================================================ -->
 <script type="module">
-// ─── STEP 1: CONFIGURATION ───
+// ─── STEP 1: REPLACE THIS ENTIRE OBJECT WITH YOUR FIREBASE CONFIG ───
 const firebaseConfig = {
-  apiKey: "AIzaSyCJRpDsRqUlXhy-5GYhbeBjtGIxLOo0390",
-  authDomain: "scpsystem-c2dec.firebaseapp.com",
-  projectId: "scpsystem-c2dec",
-  storageBucket: "scpsystem-c2dec.firebasestorage.app",
-  messagingSenderId: "5202962135",
-  appId: "1:5202962135:web:a5e63b8a0fc0aedf1bf632",
-  measurementId: "G-BWYPXZ13G1"
+  apiKey:            "AIzaSyCJRpDsRqUlXhy-5GYhbeBjtGIxLOoO390",
+  authDomain:        "scpsystem-c2dec.firebaseapp.com",
+  projectId:         "scpsystem-c2dec",
+  storageBucket:     "scpsystem-c2dec.firebasestorage.app",
+  messagingSenderId: "520296926135",
+  appId:             "1:520296926135:web:a5e63b8a0fc0aedf1bf632"
 };
+// ─────────────────────────────────────────────────────────────────────
 
-// ─── STEP 2: IMPORTS ───
 import { initializeApp }                          from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword,
          signInWithEmailAndPassword, signOut,
@@ -26,705 +43,1075 @@ import { getFirestore, collection, doc, setDoc,
          query, orderBy, limit, onSnapshot,
          serverTimestamp, where }                  from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
-// ─── STEP 3: INITIALIZATION ───
+// ── Init ──────────────────────────────────────────────────────────────
 const fbApp  = initializeApp(firebaseConfig);
 const auth   = getAuth(fbApp);
 const db     = getFirestore(fbApp);
 
 // ── Communication button definitions (static) ─────────────────────────
 const COMM_BUTTONS = [
-  { id: "makan_minum", label: "Saya nak makan / minum", emoji: "🍽️", tts: "Saya nak makan atau minum.", priority: "Biasa" },
-  { id: "saya_nak",    label: "Saya nak",               emoji: "🙋", tts: "Saya nak sesuatu.",        priority: "Biasa" },
-  { id: "saya_taknak", label: "Saya taknak",            emoji: "🙅", tts: "Saya taknak.",             priority: "Biasa" },
-  { id: "tolong",      label: "Tolong saya",            emoji: "🆘", tts: "Tolong saya! Saya perlukan bantuan.", priority: "Tinggi" },
-  { id: "ya",          label: "Ya",                     emoji: "✅", tts: "Ya.",                      priority: "Biasa" },
-  { id: "tidak",       label: "Tidak",                  emoji: "❌", tts: "Tidak.",                   priority: "Biasa" },
-  { id: "tandas",      label: "Saya nak ke tandas",     emoji: "🚽", tts: "Saya nak ke tandas.",       priority: "Biasa" },
-  { id: "sakit",       label: "Saya sakit / tak selesa",emoji: "🤒", tts: "Saya sakit atau tidak selesa.", priority: "Tinggi" }
+  { id:'makan_minum', label:'Saya nak makan / minum', icon:'🍽️', desc:'Lapar atau dahaga',  priority:false },
+  { id:'saya_nak',    label:'Saya nak',                icon:'🙋', desc:'Keinginan umum',    priority:false },
+  { id:'saya_taknak', label:'Saya taknak',             icon:'🙅', desc:'Menolak',           priority:false },
+  { id:'tolong',      label:'Tolong saya',             icon:'🆘', desc:'Perlu bantuan',     priority:true  },
+  { id:'ya',          label:'Ya',                      icon:'✅', desc:'Bersetuju',         priority:false },
+  { id:'tidak',       label:'Tidak',                   icon:'❌', desc:'Tidak bersetuju',   priority:false },
+  { id:'tandas',      label:'Saya nak ke tandas',      icon:'🚽', desc:'Keperluan tandas',  priority:false },
+  { id:'sakit',       label:'Saya sakit / tak selesa', icon:'🤒', desc:'Tidak sihat',       priority:true  },
 ];
-
-// Expose variables & triggers to global scope for HTML inline onclicks
-window.auth = auth;
-window.db   = db;
-window.COMM_BUTTONS = COMM_BUTTONS;
-
-// ── Authentication Handlers ───────────────────────────────────────────
-window.doRegister = async function(email, password, displayName) {
-  try {
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    await updateProfile(cred.user, { displayName: displayName });
-    return { success: true, user: cred.user };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
+const TTS = {
+  makan_minum:'Saya nak makan atau minum.',
+  saya_nak:   'Saya nak sesuatu.',
+  saya_taknak:'Saya taknak.',
+  tolong:     'Tolong saya! Saya perlukan bantuan.',
+  ya:         'Ya.',
+  tidak:      'Tidak.',
+  tandas:     'Saya nak ke tandas.',
+  sakit:      'Saya sakit atau tidak selesa.',
 };
 
-window.doLogin = async function(email, password) {
-  try {
-    const cred = await signInWithEmailAndPassword(auth, email, password);
-    return { success: true, user: cred.user };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-};
+// ── Runtime state ─────────────────────────────────────────────────────
+let currentUser     = null;
+let students        = [];       // loaded from Firestore
+let activeStudent   = null;
+let commLog         = [];       // loaded from Firestore (recent 100)
+let nfcScanning     = false;
+let nfcReader       = null;
+let nfcFormatJSON   = false;
+let activeTab       = 'utama';
+let unsubLog        = null;     // Firestore real-time listener unsub fn
+let unsubStudents   = null;
 
-window.doLogout = async function() {
-  try {
-    await signOut(auth);
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-};
+// ── Helpers ───────────────────────────────────────────────────────────
+const $  = id => document.getElementById(id);
+const show = id => { const e=$(id); if(e) e.style.display=''; };
+const hide = id => { const e=$(id); if(e) e.style.display='none'; };
+const showFlex = id => { const e=$(id); if(e) e.style.display='flex'; };
 
-// ── Firestore Log Writer ─────────────────────────────────────────────
-window.logCommunicationToFirebase = async function(btnId, label, priority, source) {
-  if (!auth.currentUser) return; // Only log if someone is logged in
-  try {
-    await addDoc(collection(db, "communication_logs"), {
-      userId: auth.currentUser.uid,
-      buttonId: btnId,
-      message: label,
-      priority: priority,
-      source: source || "Skrin",
-      timestamp: serverTimestamp()
-    });
-  } catch (e) {
-    console.error("Firestore logging failed:", e);
-  }
-};
+function speak(text) {
+  if (!text || !window.speechSynthesis) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'ms-MY'; u.rate = 0.9;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
 
-// ── Realtime Log Syncing via onSnapshot ─────────────────────────────
-let unsubscribeLogs = null;
-window.startLoggingSync = function(userId, callback) {
-  if (unsubscribeLogs) unsubscribeLogs();
-  const q = query(
-    collection(db, "communication_logs"),
-    where("userId", "==", userId),
-    orderBy("timestamp", "desc"),
-    limit(50)
-  );
-  unsubscribeLogs = onSnapshot(q, (snapshot) => {
-    const logs = [];
-    snapshot.forEach(doc => {
-      logs.push({ id: doc.id, ...doc.data() });
-    });
-    callback(logs);
-  }, (err) => console.error("Snapshot error:", err));
-};
+function fmtTime(ts) {
+  if (!ts) return '–';
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleString('ms-MY', { dateStyle:'short', timeStyle:'short' });
+}
 
-// ── Students CRUD via Firestore ──────────────────────────────────────
-window.fetchStudents = async function() {
-  if (!auth.currentUser) return [];
-  try {
-    const q = query(collection(db, "students"), where("userId", "==", auth.currentUser.uid), orderBy("name", "asc"));
-    const snap = await getDocs(q);
-    const list = [];
-    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
-    return list;
-  } catch (e) {
-    console.error(e); return [];
-  }
-};
+function initials(name) {
+  if (!name) return '??';
+  const parts = name.trim().split(' ');
+  return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+}
 
-window.saveStudent = async function(id, data) {
-  if (!auth.currentUser) return;
-  data.userId = auth.currentUser.uid;
-  if (id) {
-    await updateDoc(doc(db, "students", id), data);
+// ── Firestore paths ───────────────────────────────────────────────────
+const studentsCol  = uid => collection(db, 'users', uid, 'students');
+const studentDoc   = (uid,sid) => doc(db, 'users', uid, 'students', sid);
+const logsCol      = uid => collection(db, 'users', uid, 'logs');
+
+// ══════════════════════════════════════════════════════════════════════
+//  AUTH
+// ══════════════════════════════════════════════════════════════════════
+onAuthStateChanged(auth, user => {
+  if (user) {
+    currentUser = user;
+    hide('page-login');
+    hide('page-register');
+    showFlex('app-shell');
+    $('header-email').textContent = user.displayName || user.email;
+    subscribeStudents();
+    subscribeLog();
+    renderActiveTab();
   } else {
-    await addDoc(collection(db, "students"), data);
+    currentUser = null;
+    teardownListeners();
+    hide('app-shell');
+    showFlex('page-login');
   }
-};
+});
 
-window.deleteStudent = async function(id) {
-  await deleteDoc(doc(db, "students", id));
-};
+async function doLogin() {
+  const email = $('login-email').value.trim();
+  const pass  = $('login-pass').value.trim();
+  if (!email || !pass) { setLoginError('Sila isi emel dan kata laluan.'); return; }
+  setLoginError('');
+  $('btn-login').textContent = 'Sedang masuk…';
+  $('btn-login').disabled = true;
+  try {
+    await signInWithEmailAndPassword(auth, email, pass);
+    // onAuthStateChanged handles the rest
+  } catch(e) {
+    setLoginError(friendlyAuthError(e.code));
+    $('btn-login').textContent = '🔐 Log Masuk';
+    $('btn-login').disabled = false;
+  }
+}
+
+async function doRegister() {
+  const name  = $('reg-name').value.trim();
+  const email = $('reg-email').value.trim();
+  const pass  = $('reg-pass').value.trim();
+  const pass2 = $('reg-pass2').value.trim();
+  if (!name || !email || !pass) { setRegError('Sila isi semua medan.'); return; }
+  if (pass !== pass2)            { setRegError('Kata laluan tidak sepadan.'); return; }
+  if (pass.length < 6)           { setRegError('Kata laluan sekurang-kurangnya 6 aksara.'); return; }
+  setRegError('');
+  $('btn-register').textContent = 'Mendaftar…';
+  $('btn-register').disabled = true;
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    await updateProfile(cred.user, { displayName: name });
+    // onAuthStateChanged takes over
+  } catch(e) {
+    setRegError(friendlyAuthError(e.code));
+    $('btn-register').textContent = '✅ Daftar Akaun';
+    $('btn-register').disabled = false;
+  }
+}
+
+async function doLogout() {
+  teardownListeners();
+  nfcScanning = false; nfcReader = null;
+  students = []; commLog = []; activeStudent = null;
+  await signOut(auth);
+}
+
+function friendlyAuthError(code) {
+  const map = {
+    'auth/invalid-email':          'Format emel tidak sah.',
+    'auth/user-not-found':         'Akaun tidak dijumpai.',
+    'auth/wrong-password':         'Kata laluan salah.',
+    'auth/invalid-credential':     'Emel atau kata laluan salah.',
+    'auth/email-already-in-use':   'Emel ini sudah didaftarkan.',
+    'auth/weak-password':          'Kata laluan terlalu lemah (min 6 aksara).',
+    'auth/too-many-requests':      'Terlalu banyak percubaan. Cuba lagi sebentar.',
+    'auth/network-request-failed': 'Masalah sambungan rangkaian.',
+  };
+  return map[code] || ('Ralat: ' + code);
+}
+
+function setLoginError(msg) {
+  const el = $('login-error');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+function setRegError(msg) {
+  const el = $('reg-error');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  FIRESTORE REAL-TIME LISTENERS
+// ══════════════════════════════════════════════════════════════════════
+function subscribeStudents() {
+  if (!currentUser) return;
+  if (unsubStudents) unsubStudents();
+  const q = query(studentsCol(currentUser.uid), orderBy('createdAt', 'asc'));
+  unsubStudents = onSnapshot(q, snap => {
+    students = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    // Restore activeStudent by saved ID or default to first active
+    if (!activeStudent && students.length > 0) {
+      activeStudent = students.find(s => s.active) || students[0];
+    } else if (activeStudent) {
+      activeStudent = students.find(s => s._id === activeStudent._id) || students[0] || null;
+    }
+    renderStudentDropdown();
+    if (activeTab === 'murid') renderMurid();
+    if (activeTab === 'utama') renderUtamaStatus();
+  });
+}
+
+function subscribeLog() {
+  if (!currentUser) return;
+  if (unsubLog) unsubLog();
+  const q = query(logsCol(currentUser.uid), orderBy('timestamp', 'desc'), limit(200));
+  unsubLog = onSnapshot(q, snap => {
+    commLog = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    if (activeTab === 'utama')   renderUtama();
+    if (activeTab === 'analisis') renderAnalisis();
+  });
+}
+
+function teardownListeners() {
+  if (unsubLog)      { unsubLog();      unsubLog = null; }
+  if (unsubStudents) { unsubStudents(); unsubStudents = null; }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  STUDENTS (Firestore CRUD)
+// ══════════════════════════════════════════════════════════════════════
+async function saveStudent() {
+  if (!currentUser) return;
+  const name      = $('s-name').value.trim();
+  const diagnosis = $('s-diag').value.trim();
+  const age       = $('s-age').value.trim();
+  const notes     = $('s-notes').value.trim();
+  if (!name) { alert('Nama murid diperlukan.'); return; }
+
+  const editId = $('s-edit-id').value;
+  const btn = $('btn-save-student');
+  btn.textContent = 'Menyimpan…'; btn.disabled = true;
+
+  try {
+    if (editId) {
+      await updateDoc(studentDoc(currentUser.uid, editId), { name, diagnosis, age, notes, updatedAt: serverTimestamp() });
+    } else {
+      await addDoc(studentsCol(currentUser.uid), {
+        name, diagnosis, age, notes, active: false, createdAt: serverTimestamp()
+      });
+    }
+    closeStudentModal();
+  } catch(e) {
+    alert('Ralat menyimpan: ' + e.message);
+  }
+  btn.textContent = '💾 Simpan'; btn.disabled = false;
+}
+
+async function deleteStudent(sid) {
+  if (!currentUser || !confirm('Padam murid ini?')) return;
+  try {
+    await deleteDoc(studentDoc(currentUser.uid, sid));
+    if (activeStudent && activeStudent._id === sid) activeStudent = null;
+  } catch(e) { alert('Ralat memadam: ' + e.message); }
+}
+
+async function setActiveStudent(sid) {
+  if (!currentUser) return;
+  // Deactivate all, activate chosen
+  const batch = students.map(s =>
+    updateDoc(studentDoc(currentUser.uid, s._id), { active: s._id === sid })
+  );
+  await Promise.all(batch);
+  activeStudent = students.find(s => s._id === sid) || null;
+  renderStudentDropdown();
+  if (activeTab === 'utama') renderUtamaStatus();
+}
+
+function openAddStudent() {
+  $('s-edit-id').value = '';
+  $('s-name').value    = '';
+  $('s-diag').value    = '';
+  $('s-age').value     = '';
+  $('s-notes').value   = '';
+  $('modal-title').textContent = 'Tambah Murid Baru';
+  showFlex('modal-student');
+}
+function openEditStudent(sid) {
+  const s = students.find(x => x._id === sid);
+  if (!s) return;
+  $('s-edit-id').value = sid;
+  $('s-name').value    = s.name    || '';
+  $('s-diag').value    = s.diagnosis || '';
+  $('s-age').value     = s.age     || '';
+  $('s-notes').value   = s.notes   || '';
+  $('modal-title').textContent = 'Edit Maklumat Murid';
+  showFlex('modal-student');
+}
+function closeStudentModal() { hide('modal-student'); }
+
+// ══════════════════════════════════════════════════════════════════════
+//  COMMUNICATION TRIGGER (NFC or button tap)
+// ══════════════════════════════════════════════════════════════════════
+async function handleCommTrigger(id) {
+  if (!currentUser) return;
+  const btn = COMM_BUTTONS.find(b => b.id === id);
+  if (!btn) return;
+  speak(TTS[id] || btn.label);
+
+  // Highlight button
+  document.querySelectorAll('.comm-btn').forEach(el => el.classList.remove('active-scan'));
+  const el = document.querySelector(`.comm-btn[data-id="${id}"]`);
+  if (el) { el.classList.add('active-scan'); setTimeout(() => el.classList.remove('active-scan'), 2500); }
+
+  // Write to Firestore
+  try {
+    await addDoc(logsCol(currentUser.uid), {
+      id:          btn.id,
+      label:       btn.label,
+      icon:        btn.icon,
+      studentId:   activeStudent?._id   || null,
+      studentName: activeStudent?.name  || 'Tiada murid aktif',
+      source:      nfcScanning ? 'nfc' : 'button',
+      timestamp:   serverTimestamp(),
+    });
+    // Real-time listener will auto-refresh commLog & UI
+  } catch(e) {
+    console.error('Log write error:', e);
+  }
+}
+
+async function deleteLogEntry(lid) {
+  if (!currentUser) return;
+  try { await deleteDoc(doc(db, 'users', currentUser.uid, 'logs', lid)); } catch(e) {}
+}
+
+async function clearLog() {
+  if (!currentUser || !confirm('Padam SEMUA rekod komunikasi? Tindakan ini tidak boleh dibatalkan.')) return;
+  const snap = await getDocs(logsCol(currentUser.uid));
+  const deletes = snap.docs.map(d => deleteDoc(d.ref));
+  await Promise.all(deletes);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  NFC
+// ══════════════════════════════════════════════════════════════════════
+async function startNFC() {
+  if (!('NDEFReader' in window)) {
+    alert('WebNFC tidak disokong pada peranti/pelayar ini.\n\nWebNFC hanya berfungsi pada Chrome for Android (v89+) dengan HTTPS.\n\nGuna butang simulasi di bawah.');
+    return;
+  }
+  try {
+    nfcReader = new NDEFReader();
+    await nfcReader.scan();
+    nfcScanning = true;
+    nfcReader.addEventListener('reading', ({ message }) => {
+      for (const record of message.records) {
+        if (record.recordType === 'text') {
+          const decoder = new TextDecoder(record.encoding || 'utf-8');
+          const raw = decoder.decode(record.data).trim();
+          let id = raw;
+          try { const obj = JSON.parse(raw); id = obj.id || raw; } catch(_) {}
+          if (COMM_BUTTONS.find(b => b.id === id)) handleCommTrigger(id);
+        }
+      }
+    });
+    nfcReader.addEventListener('readingerror', () => {
+      showToast('Ralat membaca tag NFC. Pastikan tag adalah NDEF.', 'warn');
+    });
+  } catch(e) {
+    nfcScanning = false; nfcReader = null;
+    if (e.name === 'NotAllowedError') {
+      alert('Kebenaran NFC ditolak. Sila benarkan akses NFC dalam pelayar anda.');
+    } else {
+      alert('Gagal memulakan NFC: ' + e.message);
+    }
+  }
+  renderUtamaStatus();
+}
+
+function stopNFC() {
+  nfcScanning = false; nfcReader = null;
+  renderUtamaStatus();
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  CSV EXPORT
+// ══════════════════════════════════════════════════════════════════════
+function exportCSV() {
+  const header = 'Masa,Murid,Komunikasi,Sumber';
+  const rows = commLog.map(l =>
+    `"${fmtTime(l.timestamp)}","${l.studentName}","${l.label}","${l.source||'button'}"`
+  );
+  const csv  = [header, ...rows].join('\n');
+  const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `smart-pillow-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  TOAST
+// ══════════════════════════════════════════════════════════════════════
+function showToast(msg, type='info') {
+  let t = $('toast');
+  if (!t) { t = document.createElement('div'); t.id='toast'; document.body.appendChild(t); }
+  const colors = { info:'#2D4A43', warn:'#b7770d', error:'#C0392B', ok:'#1a6e2e' };
+  Object.assign(t.style, {
+    position:'fixed', bottom:'24px', left:'50%', transform:'translateX(-50%)',
+    background: colors[type]||colors.info, color:'#fff',
+    padding:'12px 22px', borderRadius:'10px', fontSize:'14px',
+    fontFamily:"'Plus Jakarta Sans',sans-serif", fontWeight:'600',
+    zIndex:'9999', boxShadow:'0 4px 20px rgba(0,0,0,0.2)',
+    transition:'opacity 0.3s', opacity:'1',
+  });
+  t.textContent = msg;
+  clearTimeout(t._to);
+  t._to = setTimeout(() => { t.style.opacity='0'; }, 2800);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  TAB ROUTING
+// ══════════════════════════════════════════════════════════════════════
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === tab)
+  );
+  document.querySelectorAll('.page').forEach(p =>
+    p.classList.toggle('active', p.id === 'tab-' + tab)
+  );
+  renderActiveTab();
+}
+
+function renderActiveTab() {
+  switch(activeTab) {
+    case 'utama':    renderUtama();    break;
+    case 'analisis': renderAnalisis(); break;
+    case 'murid':    renderMurid();    break;
+    case 'nfc':      renderNFC();      break;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  RENDER: UTAMA
+// ══════════════════════════════════════════════════════════════════════
+function renderUtamaStatus() {
+  // Status alert
+  const alertEl = $('status-alert');
+  if (!alertEl) return;
+  const sn = activeStudent?.name;
+  const nfcOk = 'NDEFReader' in window;
+
+  if (!nfcOk) {
+    alertEl.innerHTML = `<div class="alert-warn">⚠️ WebNFC tidak disokong pada pelayar ini — guna butang simulasi di bawah. WebNFC hanya tersedia pada <strong>Chrome for Android (v89+)</strong> dengan HTTPS.</div>`;
+  } else if (nfcScanning) {
+    alertEl.innerHTML = `<div class="alert-success">✅ NFC aktif${sn ? ` — merakam untuk <strong>${sn}</strong>` : ''}. Dekatkan tag NFC ke peranti…</div>`;
+  } else {
+    alertEl.innerHTML = `<div class="alert-info">👋 Selamat kembali, <strong>${currentUser?.displayName || currentUser?.email}</strong>${sn ? `. Murid aktif: <strong>${sn}</strong>` : '. Tiada murid dipilih.'}</div>`;
+  }
+
+  // NFC area + button
+  const nfcArea = $('nfc-scan-area');
+  const nfcIcon = $('nfc-icon');
+  const nfcMsg  = $('nfc-msg');
+  const nfcBtn  = $('btn-nfc');
+  const lastLog = commLog[0];
+
+  if (lastLog) {
+    if (nfcArea) nfcArea.className = 'nfc-area active';
+    if (nfcIcon) { nfcIcon.textContent = lastLog.icon; nfcIcon.style.fontSize = '56px'; nfcIcon.classList.remove('nfc-pulse'); }
+    if (nfcMsg)  nfcMsg.innerHTML = `<strong style="font-size:16px;color:var(--forest-dark);font-family:'Plus Jakarta Sans',sans-serif;">${lastLog.label}</strong><br><span style="font-size:12px;color:var(--text-muted);">${lastLog.studentName} · ${fmtTime(lastLog.timestamp)}</span>`;
+  } else {
+    if (nfcArea) nfcArea.className = 'nfc-area' + (nfcScanning ? ' active' : '');
+    if (nfcIcon) {
+      nfcIcon.textContent = nfcScanning ? '📡' : '📶';
+      nfcIcon.style.fontSize = '48px';
+      nfcScanning ? nfcIcon.classList.add('nfc-pulse') : nfcIcon.classList.remove('nfc-pulse');
+    }
+    if (nfcMsg) nfcMsg.textContent = nfcScanning ? 'NFC aktif. Menunggu imbasan tag…' : 'Tiada imbasan lagi. Tekan butang di atas atau dekatkan tag NFC.';
+  }
+
+  if (nfcBtn) {
+    if (nfcScanning) {
+      nfcBtn.textContent = '⏹ Henti NFC';
+      nfcBtn.style.cssText = 'background:#fdf0ee;border-color:#f5b7b1;color:#922b21;';
+    } else {
+      nfcBtn.textContent = '📡 Mula Imbas NFC';
+      nfcBtn.style.cssText = '';
+    }
+  }
+}
+
+function renderUtama() {
+  renderUtamaStatus();
+
+  // Comm buttons
+  const grid = document.querySelector('.comm-grid');
+  if (grid) {
+    grid.innerHTML = COMM_BUTTONS.map(b => `
+      <button class="comm-btn${b.priority?' priority':''}" data-id="${b.id}" onclick="handleCommTrigger('${b.id}')">
+        <span class="comm-icon">${b.icon}</span>
+        <span class="comm-label">${b.label}</span>
+        <span class="comm-sub">${b.desc}</span>
+        ${b.priority?'<span class="badge badge-red" style="font-size:9px;padding:2px 7px;">KEUTAMAAN</span>':''}
+      </button>`).join('');
+  }
+
+  // Stats
+  const todayStr = new Date().toDateString();
+  const todayLogs = commLog.filter(l => {
+    const d = l.timestamp?.toDate ? l.timestamp.toDate() : new Date(l.timestamp);
+    return d.toDateString() === todayStr;
+  });
+  if ($('stat-total'))  $('stat-total').textContent  = todayLogs.length;
+  if ($('stat-unique')) $('stat-unique').textContent = new Set(todayLogs.map(l=>l.id)).size;
+  if ($('stat-all'))    $('stat-all').textContent    = commLog.length;
+
+  const counts = {};
+  todayLogs.forEach(l => counts[l.id] = (counts[l.id]||0)+1);
+  const topId  = Object.keys(counts).sort((a,b)=>counts[b]-counts[a])[0];
+  const topBtn = topId ? COMM_BUTTONS.find(b=>b.id===topId) : null;
+  if ($('stat-top')) $('stat-top').textContent = topBtn ? topBtn.icon : '–';
+
+  // Mini chart
+  const chart = $('mini-chart');
+  if (chart) {
+    if (todayLogs.length === 0) {
+      chart.innerHTML = '<span style="font-size:12px;color:var(--text-muted);align-self:center;">Tiada data hari ini.</span>';
+    } else {
+      const max = Math.max(...Object.values(counts), 1);
+      chart.innerHTML = COMM_BUTTONS.map(b => {
+        const c = counts[b.id] || 0;
+        const h = c > 0 ? Math.max(4, Math.round((c/max)*52)) : 2;
+        return `<div class="mini-bar-col">
+          <div class="mini-bar-fill" style="height:${h}px;background:${b.priority?'#C0392B':'var(--forest)'};opacity:${c>0?1:0.25};"></div>
+          <div class="mini-bar-lbl">${b.icon}</div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // Log table
+  const tbody = $('log-tbody');
+  if (!tbody) return;
+  if (commLog.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:28px;font-size:13px;">Tiada rekod lagi. Tekan butang komunikasi atau imbas tag NFC.</td></tr>';
+  } else {
+    tbody.innerHTML = commLog.slice(0,60).map(l => `
+      <tr>
+        <td style="color:var(--text-muted);white-space:nowrap;">${fmtTime(l.timestamp)}</td>
+        <td><div style="display:flex;align-items:center;gap:6px;"><div class="avatar" style="width:28px;height:28px;font-size:11px;">${initials(l.studentName)}</div>${l.studentName}</div></td>
+        <td><span style="margin-right:6px;">${l.icon}</span>${l.label}</td>
+        <td><span class="badge ${l.source==='nfc'?'badge-forest':'badge-gray'}">${l.source==='nfc'?'📡 NFC':'🖱️ Butang'}</span></td>
+        <td><button class="btn-ghost" style="padding:4px 8px;font-size:11px;" onclick="deleteLogEntry('${l._id}')">🗑️</button></td>
+      </tr>`).join('');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  RENDER: ANALISIS
+// ══════════════════════════════════════════════════════════════════════
+function renderAnalisis() {
+  const el = $('analisis-content');
+  if (!el) return;
+  const sn = activeStudent?.name || 'murid ini';
+
+  if (commLog.length === 0) {
+    el.innerHTML = `
+      <div style="text-align:center;padding:60px 20px;">
+        <div style="font-size:64px;margin-bottom:16px;opacity:0.35;">📊</div>
+        <h2 style="font-size:18px;font-weight:700;color:var(--text-muted);margin:0 0 8px;">Belum ada data untuk ${sn}</h2>
+        <p style="color:var(--text-muted);font-size:14px;margin:0 0 24px;">Mulakan dengan merakam komunikasi melalui Halaman Utama.</p>
+        <button class="btn-primary" onclick="switchTab('utama')">🏠 Pergi ke Halaman Utama</button>
+      </div>`;
+    return;
+  }
+
+  // Frequency per button
+  const counts = {};
+  COMM_BUTTONS.forEach(b => counts[b.id] = 0);
+  commLog.forEach(l => { if (counts[l.id] !== undefined) counts[l.id]++; });
+  const sorted = [...COMM_BUTTONS].sort((a,b) => counts[b.id]-counts[a.id]);
+  const maxC   = Math.max(...Object.values(counts), 1);
+
+  // By date (last 14 days)
+  const byDay = {};
+  commLog.forEach(l => {
+    const d = (l.timestamp?.toDate ? l.timestamp.toDate() : new Date(l.timestamp)).toLocaleDateString('ms-MY');
+    byDay[d] = (byDay[d]||0)+1;
+  });
+  const days = Object.keys(byDay).slice(-14);
+  const maxD = Math.max(...Object.values(byDay), 1);
+
+  // By source
+  const nfcCount = commLog.filter(l=>l.source==='nfc').length;
+  const btnCount = commLog.length - nfcCount;
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;">
+      <div class="stat-box"><div class="stat-num">${commLog.length}</div><div class="stat-lbl">Jumlah Rekod</div></div>
+      <div class="stat-box"><div class="stat-num">${Object.keys(byDay).length}</div><div class="stat-lbl">Hari Aktif</div></div>
+      <div class="stat-box"><div class="stat-num">${sorted[0].icon}</div><div class="stat-lbl">Paling Kerap: ${sorted[0].label.slice(0,16)}…</div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="sec-title" style="margin-bottom:14px;">Frekuensi Komunikasi (Semua Masa)</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        ${sorted.map(b => {
+          const pct = Math.round((counts[b.id]/maxC)*100);
+          return `<div style="display:flex;align-items:center;gap:10px;">
+            <span style="width:26px;text-align:center;font-size:18px;">${b.icon}</span>
+            <span style="font-size:12px;min-width:175px;color:var(--text-main);">${b.label}</span>
+            <div style="flex:1;background:var(--cream-border);border-radius:4px;height:14px;overflow:hidden;">
+              <div style="width:${pct}%;background:${b.priority?'var(--red-alert)':'var(--forest)'};height:100%;border-radius:4px;transition:width 0.4s;"></div>
+            </div>
+            <span style="font-size:13px;font-weight:700;min-width:30px;text-align:right;color:var(--forest-dark);">${counts[b.id]}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="sec-title" style="margin-bottom:14px;">Aktiviti Harian (Sehingga 14 Hari Lepas)</div>
+      ${days.length === 0 ? '<p style="color:var(--text-muted);font-size:13px;">Tiada data.</p>' : `
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          ${days.reverse().map(d => {
+            const c = byDay[d];
+            const pct = Math.round((c/maxD)*100);
+            return `<div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-size:12px;color:var(--text-muted);min-width:90px;">${d}</span>
+              <div style="flex:1;background:var(--cream-border);border-radius:4px;height:14px;">
+                <div style="width:${pct}%;background:var(--forest);height:100%;border-radius:4px;"></div>
+              </div>
+              <span style="font-size:12px;font-weight:700;color:var(--forest-dark);min-width:24px;text-align:right;">${c}</span>
+            </div>`;
+          }).join('')}
+        </div>`}
+    </div>
+
+    <div class="card">
+      <div class="sec-title" style="margin-bottom:14px;">Sumber Komunikasi</div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;">
+        <div class="stat-box" style="flex:1;min-width:100px;">
+          <div class="stat-num" style="font-size:22px;">📡 ${nfcCount}</div>
+          <div class="stat-lbl">Imbasan NFC Sebenar</div>
+        </div>
+        <div class="stat-box" style="flex:1;min-width:100px;">
+          <div class="stat-num" style="font-size:22px;">🖱️ ${btnCount}</div>
+          <div class="stat-lbl">Butang Manual</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  RENDER: MURID
+// ══════════════════════════════════════════════════════════════════════
+function renderMurid() {
+  const el = $('student-list');
+  if (!el) return;
+  if (students.length === 0) {
+    el.innerHTML = `
+      <div style="text-align:center;padding:60px 20px;">
+        <div style="font-size:56px;opacity:0.3;margin-bottom:14px;">👤</div>
+        <h2 style="font-size:17px;font-weight:700;color:var(--text-muted);margin:0 0 8px;">Tiada murid didaftarkan</h2>
+        <p style="font-size:14px;color:var(--text-muted);margin:0 0 20px;">Daftarkan murid untuk mula merekod komunikasi mereka.</p>
+        <button class="btn-primary" onclick="openAddStudent()">➕ Tambah Murid Pertama</button>
+      </div>`;
+    return;
+  }
+  el.innerHTML = students.map(s => `
+    <div class="student-card" style="margin-bottom:12px;">
+      <div style="display:flex;gap:14px;align-items:flex-start;flex:1;">
+        <div class="avatar" style="width:52px;height:52px;font-size:18px;">${initials(s.name)}</div>
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+            <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:16px;">${s.name}</span>
+            <span class="badge ${s.active?'badge-green':'badge-gray'}">${s.active?'● AKTIF':'○ TIDAK AKTIF'}</span>
+          </div>
+          <div style="font-size:13px;color:var(--text-muted);">
+            ${s.diagnosis?`<span class="badge badge-blue" style="margin-right:6px;">${s.diagnosis}</span>`:''}
+            ${s.age?`<span style="margin-right:8px;">📅 ${s.age}</span>`:''}
+          </div>
+          ${s.notes?`<div style="font-size:12px;color:var(--text-muted);margin-top:6px;font-style:italic;">${s.notes}</div>`:''}
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;">
+        ${!s.active?`<button class="btn-secondary" style="white-space:nowrap;font-size:12px;" onclick="setActiveStudent('${s._id}')">⭐ Jadikan Aktif</button>`:''}
+        <button class="btn-ghost" onclick="openEditStudent('${s._id}')">✏️ Edit</button>
+        <button class="btn-ghost" style="color:var(--red-alert);" onclick="deleteStudent('${s._id}')">🗑️ Padam</button>
+      </div>
+    </div>`).join('');
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  RENDER: NFC SETTINGS
+// ══════════════════════════════════════════════════════════════════════
+function renderNFC() {
+  const container = $('nfc-payloads');
+  if (!container) return;
+  document.getElementById('format-lbl').textContent = 'Format: ' + (nfcFormatJSON?'JSON':'Teks Mudah');
+  container.innerHTML = COMM_BUTTONS.map(b => {
+    const payload = nfcFormatJSON
+      ? JSON.stringify({ id:b.id, label:b.label, icon:b.icon }, null, 2)
+      : b.id;
+    return `
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <span style="font-size:13px;font-weight:600;font-family:'Plus Jakarta Sans',sans-serif;">${b.icon} ${b.label}</span>
+          ${b.priority?'<span class="badge badge-red">Keutamaan</span>':''}
+        </div>
+        <div class="payload-box">
+          <pre style="margin:0;font-size:12px;white-space:pre-wrap;padding-right:52px;">${payload}</pre>
+          <button onclick="copyPayload(this,${JSON.stringify(JSON.stringify(payload))})"
+            style="position:absolute;top:8px;right:8px;padding:4px 10px;background:var(--forest);color:white;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;">
+            Salin
+          </button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function toggleFormat() {
+  nfcFormatJSON = $('format-toggle').checked;
+  renderNFC();
+}
+
+function copyPayload(btn, jsonStr) {
+  const text = JSON.parse(jsonStr);
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓ Disalin!';
+    btn.style.background = '#27ae60';
+    setTimeout(() => { btn.textContent = orig; btn.style.background = 'var(--forest)'; }, 1800);
+  });
+}
+
+// ── Student dropdown in header ────────────────────────────────────────
+function renderStudentDropdown() {
+  const dd = $('student-dropdown');
+  if (!dd) return;
+  if (students.length === 0) {
+    dd.innerHTML = '<option value="">– Tiada murid –</option>';
+    return;
+  }
+  dd.innerHTML = students.map(s =>
+    `<option value="${s._id}" ${activeStudent && s._id===activeStudent._id?'selected':''}>${s.name}${s.diagnosis?' ('+s.diagnosis+')':''}</option>`
+  ).join('');
+}
+
+function changeActiveStudent(sid) {
+  if (!sid) return;
+  setActiveStudent(sid);
+}
+
+// Expose to HTML onclick (module scope bridging)
+Object.assign(window, {
+  doLogin, doRegister, doLogout,
+  switchTab, handleCommTrigger,
+  startNFC, stopNFC,
+  toggleNFC: () => nfcScanning ? stopNFC() : startNFC(),
+  exportCSV, clearLog, deleteLogEntry,
+  openAddStudent, openEditStudent, closeStudentModal, saveStudent, deleteStudent, setActiveStudent,
+  changeActiveStudent,
+  toggleFormat, copyPayload,
+  showLogin:    () => { hide('page-register'); showFlex('page-login'); },
+  showRegister: () => { hide('page-login');    showFlex('page-register'); },
+});
 </script>
 
 <style>
-/* ── DESIGN SYSTEM (FOREST & CREAM) RESTORED ── */
-:root {
-  --forest-dark: #1b3322;
-  --forest-mid: #2c4c35;
-  --forest-light: #446e4f;
-  --cream-bg: #f9f8f3;
-  --cream-card: #ffffff;
-  --cream-accent: #f1ebd9;
-  --text-dark: #2d332f;
-  --text-muted: #626b65;
-  --red-alert: #d94e41;
-  --red-bg: #fdf3f2;
-}
+  :root {
+    --forest:#2D4A43; --forest-dark:#1e332e; --forest-light:#3d6158;
+    --cream:#F9F8F3;  --cream-dark:#F0EFE8;  --cream-border:#E4E1D6;
+    --red-alert:#C0392B; --text-main:#1a2420; --text-muted:#6b7b77;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--text-main);min-height:100vh;margin:0;}
+  h1,h2,h3,h4,h5{font-family:'Plus Jakarta Sans',sans-serif;}
+  ::-webkit-scrollbar{width:6px;} ::-webkit-scrollbar-track{background:var(--cream-dark);} ::-webkit-scrollbar-thumb{background:#bfbdb5;border-radius:3px;}
 
-* {
-  box-sizing: border-box;
-  margin: 0; 
-  padding: 0;
-}
+  .btn-primary{background:var(--forest);color:#fff;border:none;border-radius:10px;padding:10px 22px;font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;font-size:14px;cursor:pointer;transition:background .18s,transform .1s;display:inline-flex;align-items:center;gap:7px;}
+  .btn-primary:hover{background:var(--forest-dark);transform:translateY(-1px);}
+  .btn-primary:active{transform:scale(.97);}
+  .btn-primary:disabled{opacity:.6;cursor:not-allowed;transform:none;}
+  .btn-secondary{background:transparent;color:var(--forest);border:1.5px solid var(--forest);border-radius:10px;padding:9px 18px;font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;font-size:13px;cursor:pointer;transition:background .15s;display:inline-flex;align-items:center;gap:7px;}
+  .btn-secondary:hover{background:#edf3f1;}
+  .btn-danger{background:#fdf0ee;color:var(--red-alert);border:1.5px solid #f5c6c0;border-radius:10px;padding:9px 18px;font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;font-size:13px;cursor:pointer;transition:background .15s;display:inline-flex;align-items:center;gap:7px;}
+  .btn-danger:hover{background:#fbe0dc;}
+  .btn-ghost{background:transparent;border:none;color:var(--text-muted);font-size:13px;cursor:pointer;padding:6px 10px;border-radius:8px;transition:background .12s,color .12s;display:inline-flex;align-items:center;gap:5px;font-family:'DM Sans',sans-serif;}
+  .btn-ghost:hover{background:var(--cream-border);color:var(--text-main);}
 
-body {
-  font-family: 'Plus Jakarta Sans', sans-serif;
-  background-color: var(--cream-bg);
-  color: var(--text-dark);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 100vh;
-  padding: 20px;
-}
+  .tab-nav{display:flex;gap:4px;background:var(--cream-dark);border-bottom:1px solid var(--cream-border);padding:0 20px;overflow-x:auto;}
+  .tab-btn{padding:12px 18px;font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;font-size:13px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-bottom:3px solid transparent;transition:color .15s,border-color .15s;white-space:nowrap;display:flex;align-items:center;gap:7px;}
+  .tab-btn:hover{color:var(--forest);}
+  .tab-btn.active{color:var(--forest);border-bottom-color:var(--forest);}
 
-/* Auth Card Styling */
-.auth-container {
-  background: var(--cream-card);
-  border: 1px solid var(--cream-accent);
-  border-radius: 16px;
-  width: 100%;
-  max-width: 400px;
-  padding: 32px;
-  box-shadow: 0 10px 25px rgba(27,51,34,0.04);
-}
+  .card{background:#fff;border:1px solid var(--cream-border);border-radius:14px;padding:20px;}
+  .card-sm{background:#fff;border:1px solid var(--cream-border);border-radius:12px;padding:14px 16px;}
 
-.auth-header {
-  text-align: center;
-  margin-bottom: 28px;
-}
-.auth-header h1 {
-  font-size: 24px;
-  color: var(--forest-dark);
-  font-weight: 700;
-  margin-bottom: 6px;
-}
-.auth-header p {
-  font-size: 14px;
-  color: var(--text-muted);
-}
+  .comm-btn{background:#fff;border:2px solid var(--cream-border);border-radius:14px;padding:18px 12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:10px;transition:transform .15s,box-shadow .15s,border-color .15s,background .15s;user-select:none;text-align:center;}
+  .comm-btn:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(45,74,67,.1);border-color:var(--forest-light);}
+  .comm-btn:active{transform:scale(.96);}
+  .comm-btn.priority{border-color:#f5a89b;background:#fff8f7;}
+  .comm-btn.priority:hover{border-color:var(--red-alert);box-shadow:0 4px 16px rgba(192,57,43,.12);}
+  .comm-btn.active-scan{border-color:var(--forest);background:#edf5f2;box-shadow:0 0 0 3px rgba(45,74,67,.18);animation:pulse-green .6s ease;}
+  @keyframes pulse-green{0%{box-shadow:0 0 0 0 rgba(45,74,67,.4)}70%{box-shadow:0 0 0 10px rgba(45,74,67,0)}100%{box-shadow:0 0 0 3px rgba(45,74,67,.18)}}
+  .comm-icon{font-size:36px;line-height:1;}
+  .comm-label{font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:13px;color:var(--text-main);line-height:1.3;}
+  .comm-sub{font-size:11px;color:var(--text-muted);}
 
-.form-group {
-  margin-bottom: 18px;
-}
-.form-label {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--forest-dark);
-  margin-bottom: 6px;
-}
-.form-control {
-  width: 100%;
-  padding: 11px 14px;
-  border: 1px solid var(--cream-accent);
-  background-color: #faf9f5;
-  border-radius: 8px;
-  font-size: 14px;
-  color: var(--text-dark);
-  outline: none;
-  transition: all 0.2s ease;
-}
-.form-control:focus {
-  border-color: var(--forest-light);
-  background-color: #fff;
-  box-shadow: 0 0 0 3px rgba(68,110,79,0.1);
-}
+  .alert-info{background:#EBF4F1;border:1px solid #a4d4c6;border-radius:10px;padding:12px 16px;font-size:14px;color:var(--forest-dark);}
+  .alert-warn{background:#FEF9E7;border:1px solid #f8d86a;border-radius:10px;padding:12px 16px;font-size:14px;color:#7d6608;}
+  .alert-danger{background:#FDEDEC;border:1px solid #f5b7b1;border-radius:10px;padding:12px 16px;font-size:14px;color:#922b21;}
+  .alert-success{background:#EAF4EA;border:1px solid #a9d8a9;border-radius:10px;padding:12px 16px;font-size:14px;color:#1e6e23;}
 
-.btn-forest {
-  width: 100%;
-  padding: 12px;
-  background-color: var(--forest-mid);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-.btn-forest:hover {
-  background-color: var(--forest-dark);
-}
+  .badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;font-family:'Plus Jakarta Sans',sans-serif;letter-spacing:.5px;text-transform:uppercase;}
+  .badge-green{background:#d0f0e0;color:#0e5c30;}
+  .badge-red{background:#fde8e6;color:#8c1d14;}
+  .badge-blue{background:#daeeff;color:#0c3d70;}
+  .badge-gray{background:var(--cream-border);color:var(--text-muted);}
+  .badge-forest{background:#d4e8e4;color:var(--forest-dark);}
 
-.auth-toggle {
-  text-align: center;
-  margin-top: 20px;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-.auth-toggle span {
-  color: var(--forest-light);
-  font-weight: 600;
-  cursor: pointer;
-  text-decoration: underline;
-}
+  input[type=text],input[type=email],input[type=password],textarea,select{width:100%;padding:10px 14px;border:1.5px solid var(--cream-border);border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;background:#fff;color:var(--text-main);outline:none;transition:border-color .15s;}
+  input:focus,textarea:focus,select:focus{border-color:var(--forest);}
 
-/* Main Dashboard App Shell */
-.app-shell {
-  display: flex;
-  width: 100%;
-  max-width: 1280px;
-  height: 860px;
-  background: var(--cream-card);
-  border: 1px solid var(--cream-accent);
-  border-radius: 20px;
-  box-shadow: 0 15px 35px rgba(27,51,34,0.05);
-  overflow: hidden;
-}
+  .toggle{position:relative;width:46px;height:26px;display:inline-block;}
+  .toggle input{opacity:0;width:0;height:0;}
+  .toggle-slider{position:absolute;inset:0;background:var(--cream-border);border-radius:13px;cursor:pointer;transition:background .2s;}
+  .toggle-slider:before{content:'';position:absolute;width:20px;height:20px;left:3px;top:3px;background:white;border-radius:50%;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.15);}
+  .toggle input:checked+.toggle-slider{background:var(--forest);}
+  .toggle input:checked+.toggle-slider:before{transform:translateX(20px);}
 
-/* Sidebar */
-.sidebar {
-  width: 260px;
-  background-color: var(--forest-dark);
-  color: white;
-  display: flex;
-  flex-direction: column;
-  padding: 24px;
-}
-.sidebar-brand {
-  font-size: 18px;
-  font-weight: 700;
-  margin-bottom: 32px;
-  letter-spacing: -0.5px;
-}
-.nav-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex: 1;
-}
-.nav-item {
-  padding: 12px 16px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  color: #a3b8a8;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  transition: all 0.2s;
-}
-.nav-item:hover, .nav-item.active {
-  background-color: rgba(255,255,255,0.08);
-  color: white;
-}
-.sidebar-user {
-  border-top: 1px solid rgba(255,255,255,0.1);
-  padding-top: 16px;
-  font-size: 13px;
-}
+  .data-table{width:100%;border-collapse:collapse;font-size:13px;}
+  .data-table th{text-align:left;padding:10px 14px;background:var(--cream-dark);color:var(--text-muted);font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--cream-border);}
+  .data-table td{padding:11px 14px;border-bottom:1px solid #f0ede3;vertical-align:middle;}
+  .data-table tr:last-child td{border-bottom:none;}
+  .data-table tr:hover td{background:#f9f8f3;}
+  .data-table-wrap{overflow-x:auto;border:1px solid var(--cream-border);border-radius:12px;}
 
-/* Content Area */
-.main-layout {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background-color: #fdfdfc;
-}
-.topbar {
-  height: 64px;
-  border-bottom: 1px solid var(--cream-accent);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 32px;
-}
-.page-content {
-  flex: 1;
-  padding: 32px;
-  overflow-y: auto;
-}
+  .nfc-area{border:2.5px dashed var(--cream-border);border-radius:16px;padding:32px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:var(--cream-dark);text-align:center;min-height:160px;transition:border-color .2s,background .2s;}
+  .nfc-area.active{border-color:var(--forest);background:#EBF4F1;}
+  .nfc-pulse{animation:nfcpulse 1.8s ease-in-out infinite;}
+  @keyframes nfcpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(1.08)}}
 
-/* AAC Grid Layout */
-.aac-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-}
-.aac-card {
-  background: white;
-  border: 1px solid var(--cream-accent);
-  border-radius: 12px;
-  padding: 24px 16px;
-  text-align: center;
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
-}
-.aac-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(27,51,34,0.04);
-}
-.aac-card.high-priority {
-  border-color: var(--red-alert);
-  background-color: var(--red-bg);
-}
+  .mini-bar{display:flex;align-items:flex-end;gap:4px;height:60px;}
+  .mini-bar-col{display:flex;flex-direction:column;align-items:center;gap:3px;}
+  .mini-bar-fill{width:24px;background:var(--forest);border-radius:4px 4px 0 0;transition:height .3s ease;min-height:2px;}
+  .mini-bar-lbl{font-size:9px;color:var(--text-muted);font-family:'DM Sans',sans-serif;white-space:nowrap;}
 
-/* Tables & General Modules */
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 16px;
-}
-.data-table th, .data-table td {
-  padding: 12px 16px;
-  text-align: left;
-  border-bottom: 1px solid var(--cream-accent);
-  font-size: 14px;
-}
-.data-table th {
-  background-color: #faf9f5;
-  font-weight: 600;
-  color: var(--forest-dark);
-}
+  .modal-bg{position:fixed;inset:0;background:rgba(20,30,28,.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .modal-box{background:#fff;border-radius:16px;padding:28px;max-width:480px;width:100%;box-shadow:0 20px 60px rgba(20,30,28,.2);position:relative;}
 
-/* Modals */
-.modal-bg {
-  position: fixed; top:0; left:0; width:100vw; height:100vh;
-  background: rgba(27,51,34,0.4); display:flex; justify-content:center; align-items:center; z-index:999;
-}
-.modal-box {
-  background: white; border-radius:16px; padding:32px; width:100%; max-width:460px;
-  box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-}
+  .app-header{background:var(--forest);color:white;padding:0 24px;height:58px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(20,30,28,.18);}
+  .app-header select{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;max-width:160px;}
+  .app-header select option{background:var(--forest-dark);color:#fff;}
+
+  .page{display:none;}
+  .page.active{display:block;}
+  .main-content{padding:24px;max-width:960px;margin:0 auto;display:flex;flex-direction:column;gap:20px;}
+  .sec-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+  .sec-title{font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;}
+  .stat-box{background:var(--cream-dark);border-radius:10px;padding:14px 16px;border:1px solid var(--cream-border);}
+  .stat-num{font-family:'Plus Jakarta Sans',sans-serif;font-size:26px;font-weight:800;color:var(--forest-dark);}
+  .stat-lbl{font-size:12px;color:var(--text-muted);margin-top:2px;}
+  .avatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:16px;background:#d4e8e4;color:var(--forest-dark);flex-shrink:0;}
+  .student-card{background:#fff;border:1px solid var(--cream-border);border-radius:14px;padding:20px;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;}
+  .payload-box{background:var(--cream-dark);border:1px solid var(--cream-border);border-radius:10px;padding:12px 14px;font-family:'Courier New',monospace;font-size:12px;color:var(--text-main);word-break:break-all;position:relative;}
+  .form-group{display:flex;flex-direction:column;gap:6px;}
+  .form-label{font-family:'Plus Jakarta Sans',sans-serif;font-weight:600;font-size:13px;color:var(--text-main);}
+  .toggle-wrap{display:flex;align-items:center;gap:10px;}
+  .auth-card{background:#fff;border:1px solid var(--cream-border);border-radius:20px;padding:40px 36px;width:100%;max-width:420px;box-shadow:0 4px 30px rgba(45,74,67,.07);}
+  .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--cream);padding:24px;}
+
+  @media(max-width:600px){
+    .comm-grid{grid-template-columns:repeat(2,1fr)!important;}
+    .stat-grid{grid-template-columns:repeat(2,1fr)!important;}
+  }
 </style>
 </head>
 <body>
 
-<div id="view-auth" class="auth-container" style="display:block;">
-  <div class="auth-header">
-    <h1 id="auth-title">Smart Pillow Log Masuk</h1>
-    <p id="auth-desc">Sila masukkan kelayakan akaun anda</p>
-  </div>
-  
-  <div id="auth-alert" style="display:none; padding:10px; border-radius:6px; font-size:13px; margin-bottom:16px; text-align:center;"></div>
-
-  <div class="form-group" id="group-name" style="display:none;">
-    <label class="form-label">Nama Penuh</label>
-    <input type="text" id="auth-name" class="form-control" placeholder="Nama anda">
-  </div>
-  <div class="form-group">
-    <label class="form-label">Alamat E-mel</label>
-    <input type="email" id="auth-email" class="form-control" placeholder="nama@emel.com">
-  </div>
-  <div class="form-group">
-    <label class="form-label">Kata Laluan</label>
-    <input type="password" id="auth-password" class="form-control" placeholder="••••••••">
-  </div>
-
-  <button class="btn-forest" id="btn-auth-submit" onclick="handleAuthSubmit()">Log Masuk</button>
-  
-  <div class="auth-toggle" id="auth-toggle-msg">
-    Belum mempunyai akaun? <span onclick="toggleAuthMode(true)">Daftar Sini</span>
+<!-- ══════════ LOGIN ══════════ -->
+<div id="page-login" class="auth-wrap">
+  <div class="auth-card">
+    <div style="text-align:center;margin-bottom:28px;">
+      <div style="font-size:40px;margin-bottom:10px;">🛏️</div>
+      <h1 style="font-size:22px;font-weight:800;color:var(--forest-dark);margin:0 0 4px;">Smart Pillow</h1>
+      <p style="font-size:13px;color:var(--text-muted);margin:0;">Sistem Rekod Komunikasi AAC + NFC</p>
+    </div>
+    <h2 style="font-size:16px;font-weight:700;margin:0 0 18px;">Log Masuk</h2>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div class="form-group">
+        <label class="form-label">Emel</label>
+        <input type="email" id="login-email" placeholder="emel@sekolah.edu.my" autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Kata Laluan</label>
+        <input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password"
+          onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+      <div id="login-error" class="alert-danger" style="display:none;font-size:13px;"></div>
+      <button id="btn-login" class="btn-primary" style="width:100%;justify-content:center;padding:12px;font-size:15px;border-radius:12px;" onclick="doLogin()">
+        🔐 Log Masuk
+      </button>
+    </div>
+    <p style="text-align:center;font-size:13px;color:var(--text-muted);margin-top:20px;">
+      Belum ada akaun? <a href="#" onclick="showRegister()" style="color:var(--forest);font-weight:600;text-decoration:none;">Daftar di sini</a>
+    </p>
   </div>
 </div>
 
-<div id="view-app" class="app-shell" style="display:none;">
-  <div class="sidebar">
-    <div class="sidebar-brand">🛏️ Smart Pillow</div>
-    <ul class="nav-list">
-      <li class="nav-item active" id="nav-aac" onclick="switchTab('aac')"><span>🔊</span> Papan AAC</li>
-      <li class="nav-item" id="nav-logs" onclick="switchTab('logs')"><span>📋</span> Log Aktiviti</li>
-      <li class="nav-item" id="nav-students" onclick="switchTab('students')"><span>👶</span> Pengurusan Murid</li>
-      <li class="nav-item" id="nav-nfc" onclick="switchTab('nfc')"><span>🎴</span> Peranti NFC</li>
-    </ul>
-    <div class="sidebar-user">
-      <div style="font-weight:600;margin-bottom:4px;" id="txt-user-name">Memuatkan...</div>
-      <div style="color:#a3b8a8;font-size:12px;margin-bottom:12px;" id="txt-user-email">...</div>
-      <button onclick="handleLogout()" style="background:none;border:none;color:#d94e41;font-weight:600;cursor:pointer;font-size:13px;text-decoration:underline;">Log Keluar</button>
+<!-- ══════════ REGISTER ══════════ -->
+<div id="page-register" class="auth-wrap" style="display:none;">
+  <div class="auth-card">
+    <div style="text-align:center;margin-bottom:24px;">
+      <div style="font-size:36px;margin-bottom:8px;">🛏️</div>
+      <h1 style="font-size:20px;font-weight:800;color:var(--forest-dark);margin:0;">Daftar Akaun Baru</h1>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div class="form-group">
+        <label class="form-label">Nama Penuh</label>
+        <input type="text" id="reg-name" placeholder="Cth: Pn. Aminah Hassan" autocomplete="name">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Emel</label>
+        <input type="email" id="reg-email" placeholder="emel@sekolah.edu.my" autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Kata Laluan (min 6 aksara)</label>
+        <input type="password" id="reg-pass" placeholder="••••••••" autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Ulang Kata Laluan</label>
+        <input type="password" id="reg-pass2" placeholder="••••••••" autocomplete="new-password"
+          onkeydown="if(event.key==='Enter')doRegister()">
+      </div>
+      <div id="reg-error" class="alert-danger" style="display:none;font-size:13px;"></div>
+      <button id="btn-register" class="btn-primary" style="width:100%;justify-content:center;padding:12px;font-size:15px;border-radius:12px;" onclick="doRegister()">
+        ✅ Daftar Akaun
+      </button>
+    </div>
+    <p style="text-align:center;font-size:13px;color:var(--text-muted);margin-top:20px;">
+      Sudah ada akaun? <a href="#" onclick="showLogin()" style="color:var(--forest);font-weight:600;text-decoration:none;">Log masuk</a>
+    </p>
+  </div>
+</div>
+
+<!-- ══════════ APP SHELL ══════════ -->
+<div id="app-shell" style="display:none;">
+
+  <header class="app-header">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-size:24px;">🛏️</span>
+      <div>
+        <div style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:14px;color:#fff;line-height:1.2;">Smart Pillow</div>
+        <div style="font-size:10px;color:rgba(255,255,255,.65);">Sistem AAC + NFC</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:nowrap;">
+      <select id="student-dropdown" onchange="changeActiveStudent(this.value)"></select>
+      <span style="background:rgba(255,255,255,.15);color:#fff;font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;font-family:'Plus Jakarta Sans',sans-serif;white-space:nowrap;" id="header-email">GURU</span>
+      <button class="btn-ghost" style="color:rgba(255,255,255,.8);font-size:12px;white-space:nowrap;" onclick="doLogout()">⬅️ Keluar</button>
+    </div>
+  </header>
+
+  <nav class="tab-nav">
+    <button class="tab-btn active" data-tab="utama"    onclick="switchTab('utama')">🏠 Halaman Utama</button>
+    <button class="tab-btn"        data-tab="analisis" onclick="switchTab('analisis')">📊 Analisis Data</button>
+    <button class="tab-btn"        data-tab="murid"    onclick="switchTab('murid')">👤 Maklumat Murid</button>
+    <button class="tab-btn"        data-tab="nfc"      onclick="switchTab('nfc')">📡 Tetapan NFC</button>
+  </nav>
+
+  <!-- UTAMA -->
+  <div id="tab-utama" class="page active">
+    <div class="main-content">
+      <div id="status-alert"></div>
+
+      <div>
+        <div class="sec-head">
+          <span class="sec-title">📡 Komunikasi Semasa</span>
+          <button id="btn-nfc" class="btn-secondary" onclick="toggleNFC()">📡 Mula Imbas NFC</button>
+        </div>
+        <div id="nfc-scan-area" class="nfc-area">
+          <div id="nfc-icon" style="font-size:48px;color:var(--text-muted);">📶</div>
+          <p id="nfc-msg" style="font-size:14px;color:var(--text-muted);margin:0;max-width:320px;">Tiada imbasan lagi. Tekan butang di atas atau dekatkan tag NFC.</p>
+        </div>
+      </div>
+
+      <div>
+        <div class="sec-head">
+          <span class="sec-title">🔘 8 Butang Komunikasi</span>
+          <span style="font-size:12px;color:var(--text-muted);">Ketik untuk simulasi / merakam</span>
+        </div>
+        <div class="comm-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;"></div>
+      </div>
+
+      <div>
+        <div class="sec-head"><span class="sec-title">📈 Statistik Hari Ini</span></div>
+        <div class="stat-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
+          <div class="stat-box"><div class="stat-num" id="stat-total">–</div><div class="stat-lbl">Jumlah Hari Ini</div></div>
+          <div class="stat-box"><div class="stat-num" id="stat-unique">–</div><div class="stat-lbl">Jenis Unik</div></div>
+          <div class="stat-box"><div class="stat-num" id="stat-top">–</div><div class="stat-lbl">Paling Kerap</div></div>
+          <div class="stat-box"><div class="stat-num" id="stat-all">–</div><div class="stat-lbl">Jumlah Keseluruhan</div></div>
+        </div>
+        <div class="card-sm">
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Aktiviti hari ini (mengikut jenis)</div>
+          <div id="mini-chart" class="mini-bar"></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="sec-head">
+          <span class="sec-title">📋 Rekod Komunikasi</span>
+          <div style="display:flex;gap:8px;">
+            <button class="btn-secondary" onclick="exportCSV()">📤 Eksport CSV</button>
+            <button class="btn-danger"    onclick="clearLog()">🗑️ Padam Semua</button>
+          </div>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Masa</th><th>Murid</th><th>Komunikasi</th><th>Sumber</th><th style="width:40px;"></th>
+              </tr>
+            </thead>
+            <tbody id="log-tbody">
+              <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:28px;font-size:13px;">Memuatkan…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="main-layout">
-    <div class="topbar">
-      <h2 id="txt-header-title" style="font-size:18px;font-weight:700;color:var(--forest-dark);">Papan AAC Simulators</h2>
-      <div style="display:flex;align-items:center;gap:12px;">
-        <span style="font-size:13px;padding:4px 10px;border-radius:20px;background:var(--cream-accent);font-weight:500;" id="txt-nfc-status">WebNFC Ready</span>
+  <!-- ANALISIS -->
+  <div id="tab-analisis" class="page">
+    <div class="main-content"><div id="analisis-content"></div></div>
+  </div>
+
+  <!-- MURID -->
+  <div id="tab-murid" class="page">
+    <div class="main-content">
+      <div class="sec-head" style="margin-bottom:0;">
+        <span class="sec-title">👤 Senarai Murid</span>
+        <button class="btn-primary" onclick="openAddStudent()">➕ Tambah Murid Baru</button>
       </div>
+      <div id="student-list"></div>
     </div>
+  </div>
 
-    <div class="page-content">
-      <div id="tab-aac" style="display:block;">
-        <p style="font-size:14px;color:var(--text-muted);margin-bottom:20px;">Tekan butang di bawah untuk mensimulasikan hantaran isyarat kecemasan/komunikasi dari bantal pesakit.</p>
-        <div id="aac-cards-container" class="aac-grid"></div>
-      </div>
-
-      <div id="tab-logs" style="display:none;">
-        <div style="display:flex;justify-content:between;align-items:center;margin-bottom:20px;">
-          <p style="font-size:14px;color:var(--text-muted);">Senarai mesej yang dihantar oleh bantal pintar secara langsung.</p>
+  <!-- NFC SETTINGS -->
+  <div id="tab-nfc" class="page">
+    <div class="main-content">
+      <div class="card">
+        <h2 style="font-size:17px;font-weight:700;margin:0 0 8px;">Tetapan Tag NFC</h2>
+        <p style="font-size:14px;color:var(--text-muted);margin:0 0 20px;">Jana kandungan untuk ditulis ke dalam tag NFC menggunakan <em>NFC Tools</em> atau seumpamanya.</p>
+        <div style="background:var(--cream-dark);border-radius:10px;padding:14px 16px;margin-bottom:20px;font-size:13px;color:var(--text-muted);">
+          <strong style="color:var(--text-main);">⚙️ Cara menulis tag:</strong>
+          <ol style="margin:8px 0 0 16px;padding:0;display:flex;flex-direction:column;gap:4px;">
+            <li>Muat turun app <em>NFC Tools</em> pada telefon Android/iOS</li>
+            <li>Buka app → pilih <strong>Write</strong> → <strong>Add a record</strong> → <strong>Text</strong></li>
+            <li>Salin payload dari bawah dan tampal ke dalam medan teks</li>
+            <li>Sentuh telefon ke atas tag NFC untuk menulis</li>
+          </ol>
         </div>
-        <table class="data-table">
-          <thead>
-            <tr><th>Masa</th><th>Mesej Komunikasi</th><th>Tahap Keutamaan</th><th>Sumber Isyarat</th></tr>
-          </thead>
-          <tbody id="table-logs-body"></tbody>
-        </table>
-      </div>
-
-      <div id="tab-students" style="display:none;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-          <p style="font-size:14px;color:var(--text-muted);">Daftar maklumat pesakit atau murid yang menggunakan bantal komunikasi ini.</p>
-          <button class="btn-forest" style="width:auto;padding:8px 16px;" onclick="openStudentModal()">+ Tambah Murid</button>
+        <div class="toggle-wrap" style="margin-bottom:20px;">
+          <label class="toggle"><input type="checkbox" id="format-toggle" onchange="toggleFormat()"><span class="toggle-slider"></span></label>
+          <span style="font-size:14px;font-weight:600;" id="format-lbl">Format: Teks Mudah</span>
         </div>
-        <table class="data-table">
-          <thead>
-            <tr><th>Nama Penuh</th><th>Diagnosis</th><th>Umur</th><th>Catatan Am</th><th>Tindakan</th></tr>
-          </thead>
-          <tbody id="table-students-body"></tbody>
-        </table>
-      </div>
-
-      <div id="tab-nfc" style="display:none;">
-        <p style="font-size:14px;color:var(--text-muted);margin-bottom:24px;">Gunakan modul ini untuk menulis ID Butang ke dalam kad/tag NFC fizikal bagi dipasang pada perkakasan bantal.</p>
         <div id="nfc-payloads" style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;"></div>
       </div>
     </div>
   </div>
-</div>
 
+</div><!-- end app-shell -->
+
+<!-- STUDENT MODAL -->
 <div id="modal-student" class="modal-bg" style="display:none;" onclick="if(event.target===this)closeStudentModal()">
   <div class="modal-box">
     <h2 id="modal-title" style="font-size:18px;font-weight:700;margin:0 0 20px;">Tambah Murid Baru</h2>
     <input type="hidden" id="s-edit-id">
     <div style="display:flex;flex-direction:column;gap:14px;">
-      <div class="form-group"><label class="form-label">Nama Penuh *</label><input type="text" id="s-name" class="form-control" placeholder="Cth: Ahmad bin Zulkifli"></div>
-      <div class="form-group"><label class="form-label">Diagnosis</label><input type="text" id="s-diag" class="form-control" placeholder="Cth: Autism Spektrum, Down Syndrome"></div>
-      <div class="form-group"><label class="form-label">Umur</label><input type="text" id="s-age" class="form-control" placeholder="Cth: 9 tahun"></div>
-      <div class="form-group"><label class="form-label">Catatan</label><textarea id="s-notes" class="form-control" rows="3" placeholder="Maklumat tambahan tentang murid..."></textarea></div>
-      <button class="btn-forest" style="margin-top:10px;" onclick="handleSaveStudent()">Simpan Maklumat</button>
+      <div class="form-group"><label class="form-label">Nama Penuh *</label><input type="text" id="s-name" placeholder="Cth: Ahmad bin Zulkifli"></div>
+      <div class="form-group"><label class="form-label">Diagnosis</label><input type="text" id="s-diag" placeholder="Cth: Autism Spektrum, Down Syndrome"></div>
+      <div class="form-group"><label class="form-label">Umur</label><input type="text" id="s-age" placeholder="Cth: 9 tahun"></div>
+      <div class="form-group"><label class="form-label">Catatan</label><textarea id="s-notes" rows="3" placeholder="Maklumat tambahan tentang murid…"></textarea></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:4px;">
+        <button class="btn-ghost" onclick="closeStudentModal()">Batal</button>
+        <button id="btn-save-student" class="btn-primary" onclick="saveStudent()">💾 Simpan</button>
+      </div>
     </div>
   </div>
 </div>
-
-<script>
-let isRegisterMode = false;
-
-function toggleAuthMode(toRegister) {
-  isRegisterMode = toRegister;
-  document.getElementById("auth-title").innerText = toRegister ? "Daftar Akaun Penjaga" : "Smart Pillow Log Masuk";
-  document.getElementById("auth-desc").innerText = toRegister ? "Cipta akaun sistem pengurusan baharu" : "Sila masukkan kelayakan akaun anda";
-  document.getElementById("group-name").style.display = toRegister ? "block" : "none";
-  document.getElementById("btn-auth-submit").innerText = toRegister ? "Daftar Sekarang" : "Log Masuk";
-  document.getElementById("auth-toggle-msg").innerHTML = toRegister ? 
-    'Sudah mempunyai akaun? <span onclick="toggleAuthMode(false)">Log Masuk</span>' : 
-    'Belum mempunyai akaun? <span onclick="toggleAuthMode(true)">Daftar Sini</span>';
-}
-
-function showAlert(text, isError=true) {
-  const alertBox = document.getElementById("auth-alert");
-  alertBox.innerText = text;
-  alertBox.style.display = "block";
-  alertBox.style.backgroundColor = isError ? "#fdf3f2" : "#eef7ee";
-  alertBox.style.color = isError ? "#d94e41" : "#2c6c3e";
-}
-
-// Auth Submission
-async function handleAuthSubmit() {
-  const email = document.getElementById("auth-email").value.trim();
-  const password = document.getElementById("auth-password").value.trim();
-  const name = document.getElementById("auth-name").value.trim();
-
-  if(!email || !password) return showAlert("Sila isi e-mel dan kata laluan!");
-
-  if(isRegisterMode) {
-    if(!name) return showAlert("Sila masukkan nama anda!");
-    const res = await window.doRegister(email, password, name);
-    if(res.success) {
-      showAlert("Pendaftaran Berjaya! Log masuk automatik...", false);
-    } else {
-      showAlert(res.error);
-    }
-  } else {
-    const res = await window.doLogin(email, password);
-    if(!res.success) showAlert(res.error);
-  }
-}
-
-async function handleLogout() {
-  await window.doLogout();
-}
-
-// Tab Switching
-function switchTab(tabId) {
-  const tabs = ['aac', 'logs', 'students', 'nfc'];
-  tabs.forEach(t => {
-    document.getElementById(`tab-${t}`).style.display = (t === tabId) ? "block" : "none";
-    document.getElementById(`nav-${t}`).classList.toggle("active", t === tabId);
-  });
-  
-  const titles = { aac: "Papan AAC Simulators", logs: "Log Aktiviti Komunikasi", students: "Pengurusan Profil Murid", nfc: "Konfigurasi Kad NFC" };
-  document.getElementById("txt-header-title").innerText = titles[tabId];
-
-  if(tabId === 'students') reloadStudentsTable();
-}
-
-// Generate AAC Screen & NFC configuration list
-function initAppUI() {
-  const aacContainer = document.getElementById("aac-cards-container");
-  const nfcContainer = document.getElementById("nfc-payloads");
-  
-  aacContainer.innerHTML = "";
-  nfcContainer.innerHTML = "";
-
-  window.COMM_BUTTONS.forEach(btn => {
-    // Fill Tab 1 (AAC)
-    const card = document.createElement("div");
-    card.className = `aac-card ${btn.priority === "Tinggi" ? "high-priority" : ""}`;
-    card.innerHTML = `<div style="font-size:32px;margin-bottom:8px;">${btn.emoji}</div>
-                      <div style="font-weight:700;font-size:14px;color:var(--forest-dark);">${btn.label}</div>`;
-    card.onclick = () => {
-      speakText(btn.tts);
-      window.logCommunicationToFirebase(btn.id, btn.label, btn.priority, "Skrin Dashboard");
-    };
-    aacContainer.appendChild(card);
-
-    // Fill Tab 4 (NFC Config Buttons)
-    const nfcRow = document.createElement("div");
-    nfcRow.style = "background:white; border:1px solid var(--cream-accent); padding:16px; border-radius:12px; display:flex; justify-content:space-between; align-items:center;";
-    nfcRow.innerHTML = `<div style="display:flex;align-items:center;gap:10px;">
-                          <span style="font-size:20px;">${btn.emoji}</span>
-                          <span style="font-size:14px;font-weight:600;">${btn.id}</span>
-                        </div>
-                        <button class="btn-forest" style="width:auto;padding:6px 12px;font-size:12px;" onclick="writeNfcTag('${btn.id}')">Tulis Kad</button>`;
-    nfcContainer.appendChild(nfcRow);
-  });
-}
-
-// Text to speech Malay Voice
-function speakText(text) {
-  if ('speechSynthesis' in window) {
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = 'ms-MY';
-    utter.rate = 0.95;
-    window.speechSynthesis.speak(utter);
-  }
-}
-
-// UI Realtime System Observer for Firebase Connection
-setTimeout(() => {
-  if(window.auth) {
-    window.auth.onAuthStateChanged(user => {
-      if(user) {
-        document.getElementById("view-auth").style.display = "none";
-        document.getElementById("view-app").style.display = "flex";
-        document.getElementById("txt-user-name").innerText = user.displayName || "Penjaga Pintar";
-        document.getElementById("txt-user-email").innerText = user.email;
-        initAppUI();
-        
-        // Start live sync tables
-        window.startLoggingSync(user.uid, (logs) => {
-          const tbody = document.getElementById("table-logs-body");
-          tbody.innerHTML = logs.length ? "" : '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">Tiada logs dikesan.</td></tr>';
-          logs.forEach(l => {
-            let tStr = "...";
-            if(l.timestamp) {
-              tStr = new Date(l.timestamp.seconds * 1000).toLocaleTimeString('ms-MY', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-            }
-            const tr = document.createElement("tr");
-            if(l.priority === "Tinggi") tr.style.backgroundColor = "var(--red-bg)";
-            tr.innerHTML = `<td>${tStr}</td><td><strong>${l.message}</strong></td>
-                            <td><span style="font-size:12px;color:white;padding:2px 6px;border-radius:4px;background:${l.priority==='Tinggi'?'var(--red-alert)':'var(--forest-light)'}">${l.priority}</span></td>
-                            <td>${l.source}</td>`;
-            tbody.appendChild(tr);
-          });
-        });
-
-      } else {
-        document.getElementById("view-auth").style.display = "block";
-        document.getElementById("view-app").style.display = "none";
-      }
-    });
-  }
-}, 400);
-
-// CRUD Student Frontend Functions
-async function reloadStudentsTable() {
-  const tbody = document.getElementById("table-students-body");
-  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">Memuatkan profil murid...</td></tr>';
-  const list = await window.fetchStudents();
-  tbody.innerHTML = list.length ? "" : '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">Tiada murid didaftarkan.</td></tr>';
-  list.forEach(s => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td><strong>${s.name}</strong></td><td>${s.diagnosis || '-'}</td><td>${s.age || '-'}</td><td>${s.notes || '-'}</td>
-                    <td>
-                      <span style="color:var(--forest-light);margin-right:12px;cursor:pointer;font-weight:600;" onclick="openStudentModal('${s.id}','${s.name}','${s.diagnosis}','${s.age}','${s.notes}')">✏️ Edit</span>
-                      <span style="color:var(--red-alert);cursor:pointer;font-weight:600;" onclick="handleDeleteStudent('${s.id}')">🗑️ Padam</span>
-                    </td>`;
-    tbody.appendChild(tr);
-  });
-}
-
-function openStudentModal(id='', name='', diag='', age='', notes='') {
-  document.getElementById("modal-student").style.display = "flex";
-  document.getElementById("modal-title").innerText = id ? "Kemaskini Maklumat Murid" : "Tambah Murid Baru";
-  document.getElementById("s-edit-id").value = id;
-  document.getElementById("s-name").value = name;
-  document.getElementById("s-diag").value = diag;
-  document.getElementById("s-age").value = age;
-  document.getElementById("s-notes").value = notes;
-}
-function closeStudentModal() { document.getElementById("modal-student").style.display = "none"; }
-
-async function handleSaveStudent() {
-  const id = document.getElementById("s-edit-id").value;
-  const name = document.getElementById("s-name").value.trim();
-  const diagnosis = document.getElementById("s-diag").value.trim();
-  const age = document.getElementById("s-age").value.trim();
-  const notes = document.getElementById("s-notes").value.trim();
-
-  if(!name) return alert("Sila masukkan sekurang-kurangnya nama murid!");
-  await window.saveStudent(id, { name, diagnosis, age, notes });
-  closeStudentModal();
-  reloadStudentsTable();
-}
-
-async function handleDeleteStudent(id) {
-  if(confirm("Adakah anda pasti mahu memadam profil murid ini?")) {
-    await window.deleteStudent(id);
-    reloadStudentsTable();
-  }
-}
-
-// Android WebNFC Writer Trigger
-async function writeNfcTag(buttonId) {
-  if (!('NDEFReader' in window)) {
-    return alert("Peranti atau browser ini tidak menyokong fungsi WebNFC.");
-  }
-  try {
-    const ndef = new NDEFReader();
-    alert("Sila dekatkan kad / tag NFC pada belakang telefon anda untuk menulis ID: " + buttonId);
-    await ndef.write(buttonId);
-    alert("✅ Berjaya! ID Butang '" + buttonId + "' telah berjaya dimasukkan ke dalam tag.");
-  } catch (error) {
-    alert("❌ Gagal menulis kad: " + error.message);
-  }
-}
-
-// Android WebNFC Background Reader Activation
-if ('NDEFReader' in window) {
-  const ndef = new NDEFReader();
-  ndef.scan().then(() => {
-    document.getElementById("txt-nfc-status").innerText = "📡 NFC Scan Aktif";
-    document.getElementById("txt-nfc-status").style.backgroundColor = "#eef7ee";
-    document.getElementById("txt-nfc-status").style.color = "#2c6c3e";
-    
-    ndef.onreading = event => {
-      const decoder = new TextDecoder();
-      for (const record of event.message.records) {
-        if (record.recordType === "text") {
-          const rawId = decoder.decode(record.data).trim();
-          const targetBtn = window.COMM_BUTTONS.find(b => b.id === rawId);
-          if (targetBtn) {
-            speakText(targetBtn.tts);
-            window.logCommunicationToFirebase(targetBtn.id, targetBtn.label, targetBtn.priority, "Bantal Pintar (NFC)");
-          }
-        }
-      }
-    };
-  }).catch(() => {
-    document.getElementById("txt-nfc-status").innerText = "NFC Disengaged";
-  });
-}
-</script>
 
 </body>
 </html>
