@@ -25,13 +25,16 @@
 <script type="module">
 // ─── STEP 1: REPLACE THIS ENTIRE OBJECT WITH YOUR FIREBASE CONFIG ───
 const firebaseConfig = {
-  apiKey:            "AIzaSyCJRpDsRqUlXhy-5GYhbeBjtGIxLOoO390",
-  authDomain:        "scpsystem-c2dec.firebaseapp.com",
-  projectId:         "scpsystem-c2dec",
-  storageBucket:     "scpsystem-c2dec.firebasestorage.app",
+  apiKey: "AIzaSyCJRpDsRqUlXhy-5GYhbeBjtGIxLOoO390",
+  authDomain: "scpsystem-c2dec.firebaseapp.com",
+  projectId: "scpsystem-c2dec",
+  storageBucket: "scpsystem-c2dec.firebasestorage.app",
   messagingSenderId: "520296926135",
-  appId:             "1:520296926135:web:a5e63b8a0fc0aedf1bf632"
+  appId: "1:520296926135:web:a5e63b8a0fc0aedf1bf632",
+  measurementId: "G-BWYPXZ13G1"
 };
+
+
 // ─────────────────────────────────────────────────────────────────────
 
 import { initializeApp }                          from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
@@ -45,6 +48,7 @@ import { getFirestore, collection, doc, setDoc,
 
 // ── Init ──────────────────────────────────────────────────────────────
 const fbApp  = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
 const auth   = getAuth(fbApp);
 const db     = getFirestore(fbApp);
 
